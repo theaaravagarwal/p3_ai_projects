@@ -14,7 +14,7 @@ print("Path to dataset files:", path)
 def load_data_2d():
     np.random.seed(67)
     
-    n_samples = 300    
+    n_samples = 300
     
     #we make 2 gaussian blobs to classify because we have a simple binary problem (if its rainy or not)
     #multivariate_normal is just a way to make 2d gaussian blobs for points
