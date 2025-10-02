@@ -1,4 +1,3 @@
-
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -6,35 +5,44 @@ from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.model_selection import train_test_split
 import kagglehub
 
-# Download latest version
+#download latest dataset
 path = kagglehub.dataset_download("jsphyg/weather-dataset-rattle-package")
 
 print("Path to dataset files:", path)
 
+#2d data loader to test fast
 def load_data_2d():
     np.random.seed(67)
     
-    n_samples = 300
+    n_samples = 300    
     
+    #we make 2 gaussian blobs to classify because we have a simple binary problem (if its rainy or not)
+    #multivariate_normal is just a way to make 2d gaussian blobs for points
     X0 = np.random.multivariate_normal([-1, -1], [[0.8, 0.2], [0.2, 0.8]], n_samples//2)
     y0 = np.zeros(n_samples//2)
 
+    #btw we use these values to init weights later
+    #np.ones just makes an array of ones for the labels
     X1 = np.random.multivariate_normal([1, 1], [[0.8, -0.2], [-0.2, 0.8]], n_samples//2)
     y1 = np.ones(n_samples//2)
     
-    X = np.vstack([X0, X1])
-    y = np.hstack([y0, y1])
+    X = np.vstack([X0, X1]) #stack vertically
+    y = np.hstack([y0, y1]) #stack horizontally
     
-    indices = np.random.permutation(len(X))
+    indices = np.random.permutation(len(X)) #shuffle data to avoid ordering bias
     X, y = X[indices], y[indices]
     
     return X, y, ['Feature_1', 'Feature_2']
 
+#load data from kaggle dataset
 def load_data():
+    #read from path given by kagglehub
     df = pd.read_csv(path+'/weatherAUS.csv')
     
+    #drop rows with null target
     df = df.dropna(subset=['RainTomorrow'])
     
+    #these are the features we will use
     numerical_features = [
         'MinTemp', 'MaxTemp', 'Rainfall', 'Evaporation', 'Sunshine',
         'WindGustSpeed', 'WindSpeed9am', 'WindSpeed3pm', 
@@ -42,12 +50,15 @@ def load_data():
         'Cloud9am', 'Cloud3pm', 'Temp9am', 'Temp3pm'
     ]
     
+    #fill non numeric data with median
     df_features = df[numerical_features].fillna(df[numerical_features].median())
 
+    #if we have raintoday feature, encode it to binary
     if 'RainToday' in df.columns:
-        df['RainToday_encoded'] = df['RainToday'].map({'No': 0, 'Yes': 1}) #change raintoday to be 0/1 to be fit
+        df['RainToday_encoded'] = df['RainToday'].map({'No': 0, 'Yes': 1})
         df_features['RainToday'] = df['RainToday_encoded'].fillna(0)
     
+    #we do this to convert categorical wind dir data to binary features for each dir
     categorical_features = ['WindGustDir', 'WindDir9am', 'WindDir3pm']
     for cat_feature in categorical_features:
         if cat_feature in df.columns:
@@ -57,44 +68,63 @@ def load_data():
     
     print(f"Using {len(df_features.columns)} total features: {list(df_features.columns)}")
 
+    #convert to binary 0/1 target
     le_target = LabelEncoder()
     y = le_target.fit_transform(df['RainTomorrow'])
     
+    #feature matrix
     X = df_features.values
 
+    #we do this to "standardize" features which helps training by optimizing speed (time to reach a convergence -> less iterations -> faster training time)
     scaler = StandardScaler()
     X = scaler.fit_transform(X)
     
+    #debug print
     print(f"Final feature matrix shape: {X.shape}")
     
+    #get feature names for plotting
     feature_names = list(df_features.columns)
     
     return X, y, feature_names
 
+#load real data to use in training
 X, y, feature_names = load_data()
 m, n = X.shape
 
+#debug stats
 print(f"Dataset shape: {X.shape}, Labels: {np.unique(y, return_counts=True)}")
 
+#add bias term as first column (w0)
 X = np.column_stack([np.ones(m), X])
 n_with_bias = X.shape[1]
 
+#sigma function, limit input so e^-z doesnt explode for very large -z
+#we use sigma function to map linear output to 0-1 range for binary classification
 def sigmoid(z):
-    z = np.clip(z, -500, 500) #dont overflow
-    return 1 / (1 + np.exp(-z))
+    z = np.clip(z, -500, 500) #limit part
+    return 1 / (1 + np.exp(-z)) #just the sigma func
 
+#probability predictions
+#used when we want to get the probability of the positive class (if its gonna rain tmrw)
 def predict_proba(X, w):
-    z = X @ w
-    return sigmoid(z)
+    z = X @ w #@ symbol is mat mult ty python
+    return sigmoid(z) #sigma func to encode the probability from 0/1 (i think at least)
 
+#log loss func
+#this is used to see how well the model is doing -> lower is better
 def binary_cross_entropy(y_true, y_prob, eps=1e-12):
-    y_prob = np.clip(y_prob, eps, 1 - eps) #prevent log0
+    y_prob = np.clip(y_prob, eps, 1 - eps) #limit so log0 doesnt happen
     return -np.mean(y_true * np.log(y_prob) + (1 - y_true) * np.log(1 - y_prob))
     
+#gradient of loss in respect to weights
+#used when updating weights to reduce loss
+#derivation is from the log loss func see below link
+#https://en.wikipedia.org/wiki/Logistic_regression
 def gradient(X, y_true, y_prob):
     m = X.shape[0]
     return (1/m) * X.T @ (y_prob - y_true)
 
+#quick plotting for showing feature importance
 def plot_feature_importance(w, feature_names=None, iteration=None, cost=None):
     plt.figure(figsize=(15, 10))
 
@@ -109,6 +139,7 @@ def plot_feature_importance(w, feature_names=None, iteration=None, cost=None):
     else:
         x_labels = [f'Feature {sorted_indices[i]}' for i in range(len(sorted_indices))]
     
+    #- is red, + is blue
     colors = ['red' if w < 0 else 'blue' for w in sorted_weights]
     bars = plt.bar(range(len(sorted_weights)), sorted_weights, color=colors, alpha=0.7)
     
@@ -126,24 +157,28 @@ def plot_feature_importance(w, feature_names=None, iteration=None, cost=None):
     
     plt.xticks(range(len(x_labels)), x_labels, rotation=45, ha='right')
     
-    for i, (bar, weight) in enumerate(zip(bars[:10], sorted_weights[:10])): #first 10
+    #label top 10 weights with their values
+    for i, (bar, weight) in enumerate(zip(bars[:10], sorted_weights[:10])): #first 10 after sorting
         plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01*np.sign(weight), 
                 f'{weight:.3f}', ha='center', va='bottom' if weight > 0 else 'top', fontsize=9)
     
-    plt.text(0.02, 0.98, f'Bias (w₀): {w[0]:.3f}', transform=plt.gca().transAxes, 
+    #show bias in the corner specifically
+    plt.text(0.02, 0.98, f'Bias (w0): {w[0]:.3f}', transform=plt.gca().transAxes, 
              bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8),
              verticalalignment='top', fontsize=10)
     
     plt.tight_layout()
     return plt.gcf()
 
+#init the weights to small random values
 np.random.seed(67)
 w = np.random.normal(0, 0.01, n_with_bias)
 
-#hyperparams
+#hyperparams for the training
 learning_rate = 0.02
 num_iterations = 5000
 
+#to build graphs later
 cost_history = []
 weight_history = []
 
@@ -153,9 +188,12 @@ plt.show()
 
 print("\nStarting training")
 
-snapshot_iterations = [0, 10, 50, 100, 250, 500, num_iterations-1] #points to save
+#these are just for graphing later data
+snapshot_iterations = [0, 10, 50, 100, 250, 500, num_iterations-1] #points to save in graphs later
 snapshots = {}
 
+#this is the actual training loop with batched gradient descent
+#we use batched because the dataset is not insanely large
 for i in range(num_iterations):
     y_prob = predict_proba(X, w)
     
@@ -165,8 +203,11 @@ for i in range(num_iterations):
     
     grad = gradient(X, y, y_prob)
     
+    #update the weights using gradient descent steps
+    #we do this to minimize the cost function (step size = learning rate)
     w = w - learning_rate * grad
     
+    #save snapshots to plot later on
     if i in snapshot_iterations:
         snapshots[i] = {'weights': w.copy(), 'cost': cost}
     
@@ -178,10 +219,12 @@ plot_feature_importance(w, feature_names, iteration=num_iterations-1, cost=cost_
 plt.show()
 
 print("Final parameters (w):")
-print(w) #w0 is bias
+print(w) #w0 here is bias
 
+#show training progress and the evolution of the weights
 plt.figure(figsize=(12, 5))
 
+#this chunk of code just makes 2 subplots for cost and weights
 plt.subplot(1, 2, 1)
 plt.plot(range(len(cost_history)), cost_history, 'b-', linewidth=2)
 plt.xlabel("Iteration", fontsize=12)
@@ -189,6 +232,7 @@ plt.ylabel("Cost (Log-Loss)", fontsize=12)
 plt.title("Training Progress: Cost vs. Iterations", fontsize=14, fontweight='bold')
 plt.grid(True, alpha=0.3)
 
+#mark snapshot iterations on cost graph
 for iter_num in snapshot_iterations[1:]:
     if iter_num < len(cost_history):
         plt.axvline(x=iter_num, color='red', linestyle='--', alpha=0.7)
@@ -198,6 +242,7 @@ for iter_num in snapshot_iterations[1:]:
 plt.subplot(1, 2, 2)
 weight_history_array = np.array(weight_history)
 plt.plot(weight_history_array[:, 0], label='w₀ (bias)', linewidth=2)
+#only plot a few features to not crowd the plot
 plt.plot(weight_history_array[:, 1], label='w₁ (feature 1)', linewidth=2)
 plt.plot(weight_history_array[:, 2], label='w₂ (feature 2)', linewidth=2)
 plt.xlabel("Iteration", fontsize=12)
@@ -209,11 +254,13 @@ plt.grid(True, alpha=0.3)
 plt.tight_layout()
 plt.show()
 
+#compare early vs late weights in its own subplot
 fig, axes = plt.subplots(2, 3, figsize=(18, 12))
 axes = axes.flatten()
 
 comparison_iterations = [0, 10, 50, 100, 250, num_iterations-1]
 
+#this loop makes subplots for each snapshot iteration to compare the weights to each other
 for idx, iter_num in enumerate(comparison_iterations):
     ax = axes[idx]
     
@@ -236,22 +283,22 @@ for idx, iter_num in enumerate(comparison_iterations):
     ax.grid(True, alpha=0.3, axis='y')
     
     #bias info
-    ax.text(0.02, 0.98, f'Bias: {w_iter[0]:.3f}', transform=ax.transAxes, 
-            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8),
-            verticalalignment='top', fontsize=8)
+    ax.text(0.02, 0.98, f'Bias: {w_iter[0]:.3f}', transform=ax.transAxes, bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8), verticalalignment='top', fontsize=8)
 
-plt.suptitle('Feature Weight Evolution: Parameter Updates During Training', 
-             fontsize=16, fontweight='bold', y=0.98)
+plt.suptitle('Feature Weight Evolution: Parameter Updates During Training', fontsize=16, fontweight='bold', y=0.98)
 plt.tight_layout()
 plt.show()
 
-param_indices = np.argsort(np.abs(w[1:]))[::-1][:3] + 1  # shift by 1 to skip bias since we already covered it
+#pick top 3 weights by absolute importance (skip bias)
+param_indices = np.argsort(np.abs(w[1:]))[::-1][:3] + 1  #shift by 1 to skip bias since we already covered it
 print("Plotting cost sensitivity for parameter indices:", param_indices)
 
+#compute cost given modified weights when we tweak one weight
 def compute_cost_given_w(mod_w):
     y_hat_mod = predict_proba(X, mod_w)
     return binary_cross_entropy(y, y_hat_mod)
 
+#go over each important weight to see how cost changes when we tweak it
 for idx in param_indices:
     center = w[idx]
     sweep = np.linspace(center - 1.0, center + 1.0, 60)
@@ -262,6 +309,7 @@ for idx in param_indices:
         w_tmp[idx] = val
         costs.append(compute_cost_given_w(w_tmp))
 
+    #this plot is to show how cost changes when we tweak one weight while holding others fixed
     plt.figure()
     plt.plot(sweep, costs)
     plt.xlabel(f"Parameter w[{idx}]")
@@ -270,5 +318,6 @@ for idx in param_indices:
     plt.grid(True)
     plt.show()
 
+#the threshold predictor from the skeleton being optional
 def predict_label(X_new, w, threshold=0.5):
     return (predict_proba(X_new, w) >= threshold).astype(int)
