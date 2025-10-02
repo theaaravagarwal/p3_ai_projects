@@ -242,10 +242,10 @@ for iter_num in snapshot_iterations[1:]:
 
 plt.subplot(1, 2, 2)
 weight_history_array = np.array(weight_history)
-plt.plot(weight_history_array[:, 0], label='w₀ (bias)', linewidth=2)
+plt.plot(weight_history_array[:, 0], label='w0 (bias)', linewidth=2)
 #only plot a few features to not crowd the plot
-plt.plot(weight_history_array[:, 1], label='w₁ (feature 1)', linewidth=2)
-plt.plot(weight_history_array[:, 2], label='w₂ (feature 2)', linewidth=2)
+plt.plot(weight_history_array[:, 1], label='w1 (feature 1)', linewidth=2)
+plt.plot(weight_history_array[:, 2], label='w2 (feature 2)', linewidth=2)
 plt.xlabel("Iteration", fontsize=12)
 plt.ylabel("Parameter Value", fontsize=12)
 plt.title("Parameter Evolution During Training", fontsize=14, fontweight='bold')
