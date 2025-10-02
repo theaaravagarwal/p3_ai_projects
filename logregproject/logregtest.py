@@ -11,28 +11,29 @@ path = kagglehub.dataset_download("jsphyg/weather-dataset-rattle-package")
 print("Path to dataset files:", path)
 
 #2d data loader to test fast
-def load_data_2d():
-    np.random.seed(67)
+#its never used but still kept for later reference
+# def load_data_2d():
+#     np.random.seed(67)
     
-    n_samples = 300
+#     n_samples = 300
     
-    #we make 2 gaussian blobs to classify because we have a simple binary problem (if its rainy or not)
-    #multivariate_normal is just a way to make 2d gaussian blobs for points
-    X0 = np.random.multivariate_normal([-1, -1], [[0.8, 0.2], [0.2, 0.8]], n_samples//2)
-    y0 = np.zeros(n_samples//2)
+#     #we make 2 gaussian blobs to classify because we have a simple binary problem (if its rainy or not)
+#     #multivariate_normal is just a way to make 2d gaussian blobs for points
+#     X0 = np.random.multivariate_normal([-1, -1], [[0.8, 0.2], [0.2, 0.8]], n_samples//2)
+#     y0 = np.zeros(n_samples//2)
 
-    #btw we use these values to init weights later
-    #np.ones just makes an array of ones for the labels
-    X1 = np.random.multivariate_normal([1, 1], [[0.8, -0.2], [-0.2, 0.8]], n_samples//2)
-    y1 = np.ones(n_samples//2)
+#     #btw we use these values to init weights later
+#     #np.ones just makes an array of ones for the labels
+#     X1 = np.random.multivariate_normal([1, 1], [[0.8, -0.2], [-0.2, 0.8]], n_samples//2)
+#     y1 = np.ones(n_samples//2)
     
-    X = np.vstack([X0, X1]) #stack vertically
-    y = np.hstack([y0, y1]) #stack horizontally
+#     X = np.vstack([X0, X1]) #stack vertically
+#     y = np.hstack([y0, y1]) #stack horizontally
     
-    indices = np.random.permutation(len(X)) #shuffle data to avoid ordering bias
-    X, y = X[indices], y[indices]
+#     indices = np.random.permutation(len(X)) #shuffle data to avoid ordering bias
+#     X, y = X[indices], y[indices]
     
-    return X, y, ['Feature_1', 'Feature_2']
+#     return X, y, ['Feature_1', 'Feature_2']
 
 #load data from kaggle dataset
 def load_data():
