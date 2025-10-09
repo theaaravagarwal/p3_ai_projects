@@ -4,16 +4,17 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.preprocessing import StandardScaler
-import kagglehub
+from kaggle.api.kaggle_api_extended import KaggleApi
 import os
 
-download_path = os.path.join(os.getcwd(), "housedata") #download to housedata dir in current folder
+api = KaggleApi(); api.authenticate()
+
+#new folder to save data too in dir
+download_path = os.path.join(os.getcwd(), "housedata")
 os.makedirs(download_path, exist_ok=True)
+api.dataset_download_files("shree1992/housedata", path=download_path, unzip=True)
 
-# Download latest version
-path = kagglehub.dataset_download("shree1992/housedata", path=download_path)
-
-print("Path to dataset files:", path)
+print("Path to dataset files:", download_path)
 
 def compute_cost(X, y, theta):
     m = len(y)
@@ -38,9 +39,9 @@ def gradient_descent(X, y, theta, learning_rate, epochs):
 
 def main():
     print("=== HOUSE PRICE PREDICTION MODEL ===")
-    print("Loading dataset from " + path + "...")
+    print("Loading dataset from " + download_path + "...")
 
-    df = pd.read_csv(path)
+    df = pd.read_csv(download_path + "/data.csv")
     
     print(f"Dataset shape: {df.shape}")
     print(f"Total samples: {len(df)}")
