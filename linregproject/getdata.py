@@ -1,6 +1,10 @@
 import kagglehub
+import os
 
-# Download latest version
-path = kagglehub.dataset_download("shree1992/housedata")
+download_path = os.path.join(os.getcwd(), "housedata") #download to housedata dir in current folder
+os.makedirs(download_path, exist_ok=True)
 
-print("Path to dataset files:", path)
+# Download latest version to the local folder
+path = kagglehub.dataset_download("shree1992/housedata", path=download_path)
+
+print("Dataset downloaded to:", path)
