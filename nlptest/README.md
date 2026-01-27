@@ -7,7 +7,7 @@ This project analyzes a large-scale Steam reviews dataset. Because the raw data 
 ### Fetching Data
 Run this command to pull the data from Kaggle using curl:
 ```bash
-curl -L -o ./steam-reviews [https://www.kaggle.com/api/v1/datasets/download/andrewmvd/steam-reviews](https://www.kaggle.com/api/v1/datasets/download/andrewmvd/steam-reviews)\
+curl -L -o steam-reviews.zip "https://www.kaggle.com/api/v1/datasets/download/andrewmvd/steam-reviews"
 ```
 
 ### Extracting Data
