@@ -4,15 +4,9 @@ This project analyzes a large-scale Steam reviews dataset. Because the raw data 
 
 ## Quick Start
 
-### Fetching Data
-Run this command to pull the data from Kaggle using curl:
-```bash
-curl -L -o steam-reviews.zip "https://www.kaggle.com/api/v1/datasets/download/andrewmvd/steam-reviews"
-```
-
-### Extracting Data
+### Getting Data
 Run this command to extract the data into the ./data folder in the /nlptest directory
-Please note that this command only needs to be run once
+Please note that this command only needs to be run once for the notebook to work
 ```bash
 python3 getdata.py
 ```
