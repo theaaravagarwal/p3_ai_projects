@@ -1,0 +1,12 @@
+numpy
+pandas
+gensim
+transformers
+matplotlib
+torch
+accelerate
+datasets
+ollama
+tokenizers
+bitsandbytes
+syllables
