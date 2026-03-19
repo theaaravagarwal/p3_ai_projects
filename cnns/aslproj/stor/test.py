@@ -34,6 +34,29 @@ MEDIAPIPE_DEFAULT_MODEL_URL = (
 )
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_MEDIAPIPE_MODEL_PATH = os.path.join(PROJECT_ROOT, "model", "hand_landmarker.task")
+HAND_CONNECTIONS: tuple[tuple[int, int], ...] = (
+    (0, 1),
+    (1, 2),
+    (2, 3),
+    (3, 4),
+    (0, 5),
+    (5, 6),
+    (6, 7),
+    (7, 8),
+    (5, 9),
+    (9, 10),
+    (10, 11),
+    (11, 12),
+    (9, 13),
+    (13, 14),
+    (14, 15),
+    (15, 16),
+    (13, 17),
+    (17, 18),
+    (18, 19),
+    (19, 20),
+    (0, 17),
+)
 
 
 class MediaPipeHandCropper:
@@ -98,14 +121,16 @@ class MediaPipeHandCropper:
         sy1 = max(0, sy2 - side)
         return sx1, sy1, sx2, sy2
 
-    def detect_bbox(self, frame: np.ndarray) -> Optional[tuple[int, int, int, int]]:
+    def detect(
+        self, frame: np.ndarray
+    ) -> tuple[Optional[tuple[int, int, int, int]], Optional[list[tuple[int, int]]]]:
         height, width = frame.shape[:2]
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
         result = self._landmarker.detect(mp_image)
         hand_landmarks = getattr(result, "hand_landmarks", None)
         if not hand_landmarks:
-            return None
+            return None, None
 
         landmarks = hand_landmarks[0]
         xs = np.array([lm.x for lm in landmarks], dtype=np.float32)
@@ -115,7 +140,17 @@ class MediaPipeHandCropper:
         y1 = int(np.clip(ys.min() * height, 0, height - 1))
         x2 = int(np.clip(xs.max() * width, 0, width - 1))
         y2 = int(np.clip(ys.max() * height, 0, height - 1))
-        return self._squared_bbox(x1, y1, x2, y2, width, height)
+        bbox = self._squared_bbox(x1, y1, x2, y2, width, height)
+        points: list[tuple[int, int]] = []
+        for landmark in landmarks:
+            px = int(np.clip(landmark.x * width, 0, width - 1))
+            py = int(np.clip(landmark.y * height, 0, height - 1))
+            points.append((px, py))
+        return bbox, points
+
+    def detect_bbox(self, frame: np.ndarray) -> Optional[tuple[int, int, int, int]]:
+        bbox, _ = self.detect(frame)
+        return bbox
 
     def close(self) -> None:
         try:
@@ -446,6 +481,16 @@ def parse_args() -> argparse.Namespace:
             "$MEDIAPIPE_HAND_LANDMARKER_MODEL, local defaults, then auto-download."
         ),
     )
+    parser.add_argument(
+        "--no-mp-landmarks",
+        action="store_true",
+        help="Disable drawing MediaPipe hand landmarks in the preview.",
+    )
+    parser.add_argument(
+        "--show-isolated-hand",
+        action="store_true",
+        help="Show an additional preview window of the isolated hand crop used for inference.",
+    )
     return parser.parse_args()
 
 
@@ -548,15 +593,71 @@ def detect_sign_region(image: np.ndarray) -> tuple[int, int, int, int]:
 
 def detect_roi(
     image: np.ndarray, cropper: Optional[MediaPipeHandCropper]
-) -> tuple[int, int, int, int, str]:
+) -> tuple[int, int, int, int, str, Optional[list[tuple[int, int]]]]:
     if cropper is not None:
-        bbox = cropper.detect_bbox(image)
+        bbox, landmarks = cropper.detect(image)
         if bbox is not None:
             x1, y1, x2, y2 = bbox
-            return x1, y1, x2, y2, "MediaPipe"
+            return x1, y1, x2, y2, "MediaPipe", landmarks
 
     x1, y1, x2, y2 = detect_sign_region(image)
-    return x1, y1, x2, y2, "Fallback"
+    return x1, y1, x2, y2, "Fallback", None
+
+
+def isolate_hand_from_crop(
+    crop: np.ndarray,
+    bbox: tuple[int, int, int, int],
+    landmarks: Optional[list[tuple[int, int]]],
+) -> np.ndarray:
+    if crop.size == 0 or not landmarks:
+        return crop
+
+    x1, y1, x2, y2 = bbox
+    crop_h, crop_w = crop.shape[:2]
+    points: list[tuple[int, int]] = []
+    for lx, ly in landmarks:
+        px = int(np.clip(lx - x1, 0, crop_w - 1))
+        py = int(np.clip(ly - y1, 0, crop_h - 1))
+        points.append((px, py))
+    if len(points) < 3:
+        return crop
+
+    pts = np.array(points, dtype=np.int32)
+    hull = cv2.convexHull(pts)
+    mask = np.zeros((crop_h, crop_w), dtype=np.uint8)
+    cv2.fillConvexPoly(mask, hull, 255)
+    kernel = np.ones((7, 7), dtype=np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+    mask = cv2.dilate(mask, kernel, iterations=1)
+
+    masked_area = int(np.count_nonzero(mask))
+    min_area = int(0.03 * crop_h * crop_w)
+    if masked_area < min_area:
+        return crop
+
+    isolated = cv2.bitwise_and(crop, crop, mask=mask)
+    return isolated
+
+
+def draw_detection_overlay(
+    frame: np.ndarray,
+    x1: int,
+    y1: int,
+    x2: int,
+    y2: int,
+    source: str,
+    landmarks: Optional[list[tuple[int, int]]],
+    draw_landmarks: bool,
+) -> tuple[int, int, int]:
+    color = (0, 0, 255) if source == "MediaPipe" else (0, 255, 0)
+    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+    if source == "MediaPipe" and draw_landmarks and landmarks:
+        for start_idx, end_idx in HAND_CONNECTIONS:
+            if start_idx < len(landmarks) and end_idx < len(landmarks):
+                cv2.line(frame, landmarks[start_idx], landmarks[end_idx], (0, 128, 255), 2)
+        for point in landmarks:
+            cv2.circle(frame, point, 3, (0, 0, 255), -1)
+    return color
 
 
 def run_manual_mode(
@@ -564,21 +665,34 @@ def run_manual_mode(
     image_path: str,
     device: torch.device,
     cropper: Optional[MediaPipeHandCropper],
+    show_isolated_hand: bool,
 ) -> None:
     image = cv2.imread(image_path)
     if image is None:
         raise RuntimeError(f"Unable to read image: {image_path}")
 
-    x1, y1, x2, y2, source = detect_roi(image, cropper)
+    x1, y1, x2, y2, source, landmarks = detect_roi(image, cropper)
     crop = image[y1:y2, x1:x2]
     if crop.size == 0:
         raise RuntimeError("Detected hand crop is empty.")
+    if source == "MediaPipe":
+        crop = isolate_hand_from_crop(crop, (x1, y1, x2, y2), landmarks)
+    model_crop_preview = crop.copy()
 
     probs = predict_probs(model, crop, device)
     label, confidence = decode_prediction(probs)
     overlay = f"{label} ({confidence * 100.0:.1f}%) [{source}]"
 
-    cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+    box_color = draw_detection_overlay(
+        image,
+        x1,
+        y1,
+        x2,
+        y2,
+        source,
+        landmarks,
+        draw_landmarks=True,
+    )
     text_y = max(y1 - 10, 30)
     cv2.putText(
         image,
@@ -586,12 +700,14 @@ def run_manual_mode(
         (x1, text_y),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.9,
-        (0, 255, 0),
+        box_color,
         2,
         cv2.LINE_AA,
     )
 
     cv2.imshow("ASL Recognition", image)
+    if show_isolated_hand:
+        cv2.imshow("Isolated Hand", model_crop_preview)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
@@ -619,7 +735,13 @@ def main() -> None:
     try:
         if args.manual:
             with torch.no_grad():
-                run_manual_mode(model, args.manual, device, cropper)
+                run_manual_mode(
+                    model,
+                    args.manual,
+                    device,
+                    cropper,
+                    show_isolated_hand=args.show_isolated_hand,
+                )
             return
 
         camera = cv2.VideoCapture(0)
@@ -633,30 +755,45 @@ def main() -> None:
                     if not ok:
                         break
 
-                    x1, y1, x2, y2, source = detect_roi(frame, cropper)
+                    x1, y1, x2, y2, source, landmarks = detect_roi(frame, cropper)
                     crop = frame[y1:y2, x1:x2]
+                    isolated_preview = None
                     if crop.size == 0:
                         smoother.clear()
                         overlay = "No hand detected"
                     else:
+                        if source == "MediaPipe":
+                            crop = isolate_hand_from_crop(crop, (x1, y1, x2, y2), landmarks)
+                        isolated_preview = crop.copy()
                         probs = predict_probs(model, crop, device)
                         smoothed = smoother.push(probs)
                         label, confidence = decode_prediction(smoothed)
                         overlay = f"{label} ({confidence * 100.0:.1f}%) [{source}]"
 
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    box_color = draw_detection_overlay(
+                        frame,
+                        x1,
+                        y1,
+                        x2,
+                        y2,
+                        source,
+                        landmarks,
+                        draw_landmarks=not args.no_mp_landmarks,
+                    )
                     cv2.putText(
                         frame,
                         overlay,
                         (20, 40),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         1.0,
-                        (0, 255, 0),
+                        box_color,
                         2,
                         cv2.LINE_AA,
                     )
 
                     cv2.imshow("ASL Recognition", frame)
+                    if args.show_isolated_hand and isolated_preview is not None:
+                        cv2.imshow("Isolated Hand", isolated_preview)
 
                     key = cv2.waitKey(1) & 0xFF
                     if key == ord("q"):
