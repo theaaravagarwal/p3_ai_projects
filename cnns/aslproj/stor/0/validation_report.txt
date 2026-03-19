@@ -1,0 +1,10 @@
+Top-1 Accuracy: 0.9982
+F1-Score: 0.9982
+Parameters: 534997
+Device: cuda
+Train Source: source-a
+Train Samples: 8888
+Validation Samples: 2222
+Batch Size: 128
+Weights: artifacts/0/model_weights.pth
+TorchScript: artifacts/0/model.pt

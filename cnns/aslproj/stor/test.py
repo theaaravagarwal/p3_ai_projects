@@ -81,6 +81,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_model(model_path: str, device: torch.device) -> nn.Module:
+    global CLASS_NAMES
     try:
         loaded = torch.jit.load(model_path, map_location=device)
         loaded.eval()
@@ -88,7 +89,24 @@ def load_model(model_path: str, device: torch.device) -> nn.Module:
     except RuntimeError:
         checkpoint = torch.load(model_path, map_location=device)
         state_dict = checkpoint.get("model_state_dict", checkpoint)
-        model = ASLModel(num_classes=len(CLASS_NAMES)).to(device)
+        classifier_weight = state_dict.get("classifier.weight")
+        num_classes = (
+            classifier_weight.shape[0]
+            if isinstance(classifier_weight, torch.Tensor)
+            else len(CLASS_NAMES)
+        )
+        checkpoint_names = (
+            checkpoint.get("class_names")
+            or checkpoint.get("classes")
+            or checkpoint.get("labels")
+            or []
+        )
+        if isinstance(checkpoint_names, (list, tuple)) and len(checkpoint_names) == num_classes:
+            CLASS_NAMES = [str(name) for name in checkpoint_names]
+        elif len(CLASS_NAMES) != num_classes:
+            CLASS_NAMES = [f"class_{i}" for i in range(num_classes)]
+
+        model = ASLModel(num_classes=num_classes).to(device)
         model.load_state_dict(state_dict)
         model.eval()
         return model
@@ -99,7 +117,9 @@ def predict_image(model: nn.Module, image: np.ndarray, device: torch.device) -> 
     logits = model(input_tensor)
     probabilities = torch.softmax(logits, dim=1)
     confidence, predicted_index = torch.max(probabilities, dim=1)
-    return CLASS_NAMES[predicted_index.item()], confidence.item()
+    predicted = predicted_index.item()
+    label = CLASS_NAMES[predicted] if predicted < len(CLASS_NAMES) else f"class_{predicted}"
+    return label, confidence.item()
 
 
 def detect_sign_region(image: np.ndarray) -> tuple[int, int, int, int]:

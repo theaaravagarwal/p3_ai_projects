@@ -1,0 +1,20 @@
+{
+  "output_dir": "artifacts",
+  "mediapipe_model_path": "model/hand_landmarker.task",
+  "image_size": 128,
+  "padding": 0.1,
+  "batch_size": 512,
+  "epochs": 25,
+  "lr": 0.0003,
+  "weight_decay": 0.0001,
+  "val_ratio": 0.2,
+  "num_workers": 1,
+  "prefetch_factor": 2,
+  "target_vram_gb": 11.0,
+  "seed": 42,
+  "min_hand_detection_confidence": 0.5,
+  "raw_train": false,
+  "horizontal_flip_prob": 0.0,
+  "max_samples": 0,
+  "debug": true
+}
