@@ -3,18 +3,186 @@
 from __future__ import annotations
 
 import argparse
+from collections import deque
+import os
+from typing import Optional
+import urllib.request
 
 import cv2
 import numpy as np
 import torch
 import torch.jit
 import torch.nn as nn
+try:
+    import mediapipe as mp
+    from mediapipe.tasks.python import vision as mp_tasks_vision
+    from mediapipe.tasks.python.core.base_options import BaseOptions as MPBaseOptions
+except Exception:
+    mp = None
+    mp_tasks_vision = None
+    MPBaseOptions = None
 
 
 IMAGE_SIZE = 128
 CLASS_NAMES = ["A", "B", "C", "D", "E"]
 MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+MEDIAPIPE_MODEL_ENV = "MEDIAPIPE_HAND_LANDMARKER_MODEL"
+MEDIAPIPE_DEFAULT_MODEL_URL = (
+    "https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
+    "hand_landmarker/float16/1/hand_landmarker.task"
+)
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_MEDIAPIPE_MODEL_PATH = os.path.join(PROJECT_ROOT, "model", "hand_landmarker.task")
+
+
+class MediaPipeHandCropper:
+    def __init__(
+        self,
+        model_path: str,
+        min_detection_confidence: float = 0.45,
+        min_tracking_confidence: float = 0.45,
+        padding_ratio: float = 0.30,
+    ) -> None:
+        if (
+            mp is None
+            or mp_tasks_vision is None
+            or MPBaseOptions is None
+            or not hasattr(mp, "Image")
+            or not hasattr(mp, "ImageFormat")
+        ):
+            raise RuntimeError(
+                "MediaPipe Tasks APIs are unavailable in this environment. "
+                "Install/upgrade mediapipe or run with --disable-mediapipe."
+            )
+        self.padding_ratio = float(max(0.0, padding_ratio))
+        options = mp_tasks_vision.HandLandmarkerOptions(
+            base_options=MPBaseOptions(model_asset_path=model_path),
+            running_mode=mp_tasks_vision.RunningMode.IMAGE,
+            num_hands=1,
+            min_hand_detection_confidence=float(min_detection_confidence),
+            min_tracking_confidence=float(min_tracking_confidence),
+        )
+        self._landmarker = mp_tasks_vision.HandLandmarker.create_from_options(options)
+
+    def _squared_bbox(
+        self,
+        x1: int,
+        y1: int,
+        x2: int,
+        y2: int,
+        width: int,
+        height: int,
+    ) -> tuple[int, int, int, int]:
+        box_w = max(1, x2 - x1)
+        box_h = max(1, y2 - y1)
+        pad_x = int(box_w * self.padding_ratio)
+        pad_y = int(box_h * self.padding_ratio)
+        x1 = max(0, x1 - pad_x)
+        y1 = max(0, y1 - pad_y)
+        x2 = min(width, x2 + pad_x)
+        y2 = min(height, y2 + pad_y)
+
+        box_w = max(1, x2 - x1)
+        box_h = max(1, y2 - y1)
+        side = max(box_w, box_h)
+        cx = (x1 + x2) // 2
+        cy = (y1 + y2) // 2
+        half = side // 2
+
+        sx1 = max(0, cx - half)
+        sy1 = max(0, cy - half)
+        sx2 = min(width, sx1 + side)
+        sy2 = min(height, sy1 + side)
+        sx1 = max(0, sx2 - side)
+        sy1 = max(0, sy2 - side)
+        return sx1, sy1, sx2, sy2
+
+    def detect_bbox(self, frame: np.ndarray) -> Optional[tuple[int, int, int, int]]:
+        height, width = frame.shape[:2]
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        result = self._landmarker.detect(mp_image)
+        hand_landmarks = getattr(result, "hand_landmarks", None)
+        if not hand_landmarks:
+            return None
+
+        landmarks = hand_landmarks[0]
+        xs = np.array([lm.x for lm in landmarks], dtype=np.float32)
+        ys = np.array([lm.y for lm in landmarks], dtype=np.float32)
+
+        x1 = int(np.clip(xs.min() * width, 0, width - 1))
+        y1 = int(np.clip(ys.min() * height, 0, height - 1))
+        x2 = int(np.clip(xs.max() * width, 0, width - 1))
+        y2 = int(np.clip(ys.max() * height, 0, height - 1))
+        return self._squared_bbox(x1, y1, x2, y2, width, height)
+
+    def close(self) -> None:
+        try:
+            self._landmarker.close()
+        except Exception:
+            pass
+
+
+def resolve_mediapipe_model_path(cli_path: str) -> Optional[str]:
+    candidates = []
+    if cli_path:
+        candidates.append(cli_path)
+    env_path = os.getenv(MEDIAPIPE_MODEL_ENV, "").strip()
+    if env_path:
+        candidates.append(env_path)
+    candidates.extend(
+        [
+            DEFAULT_MEDIAPIPE_MODEL_PATH,
+            os.path.join(PROJECT_ROOT, "models", "hand_landmarker.task"),
+            os.path.join(PROJECT_ROOT, "hand_landmarker.task"),
+        ]
+    )
+
+    for candidate in candidates:
+        expanded = os.path.abspath(os.path.expanduser(candidate))
+        if os.path.isfile(expanded):
+            return expanded
+
+    os.makedirs(os.path.dirname(DEFAULT_MEDIAPIPE_MODEL_PATH), exist_ok=True)
+    tmp_target = f"{DEFAULT_MEDIAPIPE_MODEL_PATH}.tmp"
+    try:
+        print(
+            f"Downloading MediaPipe model to {DEFAULT_MEDIAPIPE_MODEL_PATH} "
+            f"from {MEDIAPIPE_DEFAULT_MODEL_URL}"
+        )
+        if os.path.exists(tmp_target):
+            os.remove(tmp_target)
+        urllib.request.urlretrieve(MEDIAPIPE_DEFAULT_MODEL_URL, tmp_target)
+        os.replace(tmp_target, DEFAULT_MEDIAPIPE_MODEL_PATH)
+        if (
+            os.path.isfile(DEFAULT_MEDIAPIPE_MODEL_PATH)
+            and os.path.getsize(DEFAULT_MEDIAPIPE_MODEL_PATH) > 0
+        ):
+            print("MediaPipe hand_landmarker.task downloaded successfully.")
+            return DEFAULT_MEDIAPIPE_MODEL_PATH
+    except Exception as exc:
+        print(f"Failed to auto-download hand_landmarker.task: {exc}")
+    finally:
+        if os.path.exists(tmp_target):
+            try:
+                os.remove(tmp_target)
+            except OSError:
+                pass
+    return None
+
+
+class PredictionSmoother:
+    def __init__(self, window_size: int = 5) -> None:
+        self.window = deque(maxlen=max(1, int(window_size)))
+
+    def clear(self) -> None:
+        self.window.clear()
+
+    def push(self, probs: np.ndarray) -> np.ndarray:
+        self.window.append(probs)
+        stacked = np.stack(self.window, axis=0)
+        return stacked.mean(axis=0)
 
 
 class ConvBlock(nn.Module):
@@ -51,6 +219,151 @@ class ASLModel(nn.Module):
         return self.classifier(flattened)
 
 
+class LiteInvertedResidual2d(nn.Module):
+    def __init__(
+        self,
+        in_ch: int,
+        out_ch: int,
+        hidden_ch: int,
+        stride: int,
+        kernel_size: int,
+        first_stage: bool = False,
+    ) -> None:
+        super().__init__()
+        padding = kernel_size // 2
+        self.use_residual = stride == 1 and in_ch == out_ch
+        if first_stage:
+            self.block = nn.Sequential(
+                nn.Sequential(
+                    nn.Conv2d(
+                        in_ch,
+                        in_ch,
+                        kernel_size=kernel_size,
+                        stride=stride,
+                        padding=padding,
+                        groups=in_ch,
+                        bias=False,
+                    ),
+                    nn.BatchNorm2d(in_ch),
+                ),
+                nn.Conv2d(in_ch, out_ch, kernel_size=1, bias=False),
+                nn.BatchNorm2d(out_ch),
+            )
+        else:
+            self.block = nn.Sequential(
+                nn.Sequential(
+                    nn.Conv2d(in_ch, hidden_ch, kernel_size=1, bias=False),
+                    nn.BatchNorm2d(hidden_ch),
+                ),
+                nn.Sequential(
+                    nn.Conv2d(
+                        hidden_ch,
+                        hidden_ch,
+                        kernel_size=kernel_size,
+                        stride=stride,
+                        padding=padding,
+                        groups=hidden_ch,
+                        bias=False,
+                    ),
+                    nn.BatchNorm2d(hidden_ch),
+                ),
+                nn.Conv2d(hidden_ch, out_ch, kernel_size=1, bias=False),
+                nn.BatchNorm2d(out_ch),
+            )
+        self.act = nn.SiLU(inplace=True)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        identity = x
+        if len(self.block) == 4:
+            x = self.act(self.block[0](x))
+            x = self.act(self.block[1](x))
+            x = self.block[2](x)
+            x = self.block[3](x)
+        else:
+            x = self.act(self.block[0](x))
+            x = self.block[1](x)
+            x = self.block[2](x)
+        if self.use_residual:
+            x = x + identity
+        return self.act(x)
+
+
+class LiteASLModel(nn.Module):
+    def __init__(self, state_dict: dict[str, torch.Tensor], num_classes: int) -> None:
+        super().__init__()
+        stem_weight = state_dict["stem.0.weight"]
+        stem_out = int(stem_weight.shape[0])
+        self.stem = nn.Sequential(
+            nn.Conv2d(3, stem_out, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(stem_out),
+            nn.SiLU(inplace=True),
+        )
+
+        feature_indices = sorted(
+            {
+                int(key.split(".")[1])
+                for key in state_dict.keys()
+                if key.startswith("features.") and ".block." in key
+            }
+        )
+        blocks: list[nn.Module] = []
+        current_in = stem_out
+        for idx in feature_indices:
+            prefix = f"features.{idx}.block."
+            first_stage_key = f"{prefix}1.weight"
+            if first_stage_key in state_dict:
+                proj_weight = state_dict[first_stage_key]
+                out_ch = int(proj_weight.shape[0])
+                dw_weight = state_dict[f"{prefix}0.0.weight"]
+                kernel_size = int(dw_weight.shape[-1])
+                stride = 1 if out_ch == current_in else 2
+                block = LiteInvertedResidual2d(
+                    in_ch=current_in,
+                    out_ch=out_ch,
+                    hidden_ch=current_in,
+                    stride=stride,
+                    kernel_size=kernel_size,
+                    first_stage=True,
+                )
+            else:
+                expand_weight = state_dict[f"{prefix}0.0.weight"]
+                hidden_ch = int(expand_weight.shape[0])
+                proj_weight = state_dict[f"{prefix}2.weight"]
+                out_ch = int(proj_weight.shape[0])
+                dw_weight = state_dict[f"{prefix}1.0.weight"]
+                kernel_size = int(dw_weight.shape[-1])
+                stride = 1 if out_ch == current_in else 2
+                block = LiteInvertedResidual2d(
+                    in_ch=current_in,
+                    out_ch=out_ch,
+                    hidden_ch=hidden_ch,
+                    stride=stride,
+                    kernel_size=kernel_size,
+                    first_stage=False,
+                )
+            blocks.append(block)
+            current_in = out_ch
+
+        self.features = nn.Sequential(*blocks)
+        head_weight = state_dict["head.0.weight"]
+        head_out = int(head_weight.shape[0])
+        self.head = nn.Sequential(
+            nn.Conv2d(current_in, head_out, kernel_size=1, bias=False),
+            nn.BatchNorm2d(head_out),
+            nn.SiLU(inplace=True),
+        )
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.classifier = nn.Linear(head_out, num_classes)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.stem(x)
+        x = self.features(x)
+        x = self.head(x)
+        x = self.pool(x)
+        x = torch.flatten(x, 1)
+        return self.classifier(x)
+
+
 _torch_load = torch.load
 
 
@@ -65,6 +378,7 @@ torch.load = _torch_load_with_map_call
 
 
 def preprocess_frame(frame: np.ndarray) -> torch.Tensor:
+    frame = preprocess_roi(frame)
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     resized = cv2.resize(rgb_frame, (IMAGE_SIZE, IMAGE_SIZE), interpolation=cv2.INTER_LINEAR)
     normalized = resized.astype(np.float32) / 255.0
@@ -73,10 +387,65 @@ def preprocess_frame(frame: np.ndarray) -> torch.Tensor:
     return tensor
 
 
+def preprocess_roi(image: np.ndarray) -> np.ndarray:
+    if image.size == 0:
+        return image
+
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    l_channel, a_channel, b_channel = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+    l_channel = clahe.apply(l_channel)
+    enhanced = cv2.cvtColor(
+        cv2.merge([l_channel, a_channel, b_channel]), cv2.COLOR_LAB2BGR
+    )
+
+    denoised = cv2.bilateralFilter(enhanced, d=5, sigmaColor=50, sigmaSpace=50)
+    blur = cv2.GaussianBlur(denoised, (0, 0), sigmaX=1.0)
+    sharpened = cv2.addWeighted(denoised, 1.4, blur, -0.4, 0)
+    return sharpened
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True, help="Path to the model checkpoint.")
     parser.add_argument("--manual", help="Path to a single image to run instead of webcam mode.")
+    parser.add_argument(
+        "--disable-mediapipe",
+        action="store_true",
+        help="Disable MediaPipe hand detection and only use contour fallback.",
+    )
+    parser.add_argument(
+        "--mp-min-detect-conf",
+        type=float,
+        default=0.45,
+        help="MediaPipe min hand detection confidence in [0, 1].",
+    )
+    parser.add_argument(
+        "--mp-min-track-conf",
+        type=float,
+        default=0.45,
+        help="MediaPipe min tracking confidence in [0, 1].",
+    )
+    parser.add_argument(
+        "--mp-padding",
+        type=float,
+        default=0.30,
+        help="Extra bbox padding ratio for MediaPipe hand crop.",
+    )
+    parser.add_argument(
+        "--smooth-window",
+        type=int,
+        default=5,
+        help="Number of frames for probability smoothing in webcam mode.",
+    )
+    parser.add_argument(
+        "--mediapipe-model-path",
+        default="",
+        help=(
+            "Path to hand_landmarker.task. If unset, uses "
+            "$MEDIAPIPE_HAND_LANDMARKER_MODEL, local defaults, then auto-download."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -89,6 +458,12 @@ def load_model(model_path: str, device: torch.device) -> nn.Module:
     except RuntimeError:
         checkpoint = torch.load(model_path, map_location=device)
         state_dict = checkpoint.get("model_state_dict", checkpoint)
+        if isinstance(state_dict, dict) and "state_dict" in state_dict and isinstance(
+            state_dict["state_dict"], dict
+        ):
+            state_dict = state_dict["state_dict"]
+        elif isinstance(checkpoint, dict) and isinstance(checkpoint.get("state_dict"), dict):
+            state_dict = checkpoint["state_dict"]
         classifier_weight = state_dict.get("classifier.weight")
         num_classes = (
             classifier_weight.shape[0]
@@ -106,20 +481,37 @@ def load_model(model_path: str, device: torch.device) -> nn.Module:
         elif len(CLASS_NAMES) != num_classes:
             CLASS_NAMES = [f"class_{i}" for i in range(num_classes)]
 
-        model = ASLModel(num_classes=num_classes).to(device)
-        model.load_state_dict(state_dict)
-        model.eval()
-        return model
+        try:
+            model = ASLModel(num_classes=num_classes).to(device)
+            model.load_state_dict(state_dict)
+            model.eval()
+            return model
+        except RuntimeError:
+            if not (
+                isinstance(state_dict, dict)
+                and "stem.0.weight" in state_dict
+                and "head.0.weight" in state_dict
+                and "classifier.weight" in state_dict
+            ):
+                raise
+            model = LiteASLModel(state_dict=state_dict, num_classes=num_classes).to(device)
+            model.load_state_dict(state_dict)
+            model.eval()
+            return model
 
 
-def predict_image(model: nn.Module, image: np.ndarray, device: torch.device) -> tuple[str, float]:
+def predict_probs(model: nn.Module, image: np.ndarray, device: torch.device) -> np.ndarray:
     input_tensor = preprocess_frame(image).to(device)
     logits = model(input_tensor)
-    probabilities = torch.softmax(logits, dim=1)
-    confidence, predicted_index = torch.max(probabilities, dim=1)
-    predicted = predicted_index.item()
+    probabilities = torch.softmax(logits, dim=1).squeeze(0).detach().cpu().numpy()
+    return probabilities
+
+
+def decode_prediction(probabilities: np.ndarray) -> tuple[str, float]:
+    predicted = int(np.argmax(probabilities))
+    confidence = float(probabilities[predicted])
     label = CLASS_NAMES[predicted] if predicted < len(CLASS_NAMES) else f"class_{predicted}"
-    return label, confidence.item()
+    return label, confidence
 
 
 def detect_sign_region(image: np.ndarray) -> tuple[int, int, int, int]:
@@ -154,15 +546,37 @@ def detect_sign_region(image: np.ndarray) -> tuple[int, int, int, int]:
     return x1, y1, x2, y2
 
 
-def run_manual_mode(model: nn.Module, image_path: str, device: torch.device) -> None:
+def detect_roi(
+    image: np.ndarray, cropper: Optional[MediaPipeHandCropper]
+) -> tuple[int, int, int, int, str]:
+    if cropper is not None:
+        bbox = cropper.detect_bbox(image)
+        if bbox is not None:
+            x1, y1, x2, y2 = bbox
+            return x1, y1, x2, y2, "MediaPipe"
+
+    x1, y1, x2, y2 = detect_sign_region(image)
+    return x1, y1, x2, y2, "Fallback"
+
+
+def run_manual_mode(
+    model: nn.Module,
+    image_path: str,
+    device: torch.device,
+    cropper: Optional[MediaPipeHandCropper],
+) -> None:
     image = cv2.imread(image_path)
     if image is None:
         raise RuntimeError(f"Unable to read image: {image_path}")
 
-    x1, y1, x2, y2 = detect_sign_region(image)
+    x1, y1, x2, y2, source = detect_roi(image, cropper)
     crop = image[y1:y2, x1:x2]
-    label, confidence = predict_image(model, crop, device)
-    overlay = f"{label} ({confidence * 100.0:.1f}%)"
+    if crop.size == 0:
+        raise RuntimeError("Detected hand crop is empty.")
+
+    probs = predict_probs(model, crop, device)
+    label, confidence = decode_prediction(probs)
+    overlay = f"{label} ({confidence * 100.0:.1f}%) [{source}]"
 
     cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
     text_y = max(y1 - 10, 30)
@@ -186,45 +600,73 @@ def main() -> None:
     args = parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = load_model(args.model, device)
-
-    if args.manual:
-        with torch.no_grad():
-            run_manual_mode(model, args.manual, device)
-        return
-
-    camera = cv2.VideoCapture(0)
-    if not camera.isOpened():
-        raise RuntimeError("Unable to open webcam.")
+    cropper = None
+    if not args.disable_mediapipe:
+        model_path = resolve_mediapipe_model_path(args.mediapipe_model_path)
+        if not model_path:
+            raise RuntimeError(
+                "No MediaPipe hand_landmarker.task was found and auto-download failed. "
+                "Provide --mediapipe-model-path or set MEDIAPIPE_HAND_LANDMARKER_MODEL."
+            )
+        cropper = MediaPipeHandCropper(
+            model_path=model_path,
+            min_detection_confidence=args.mp_min_detect_conf,
+            min_tracking_confidence=args.mp_min_track_conf,
+            padding_ratio=args.mp_padding,
+        )
+    smoother = PredictionSmoother(window_size=args.smooth_window)
 
     try:
-        with torch.no_grad():
-            while True:
-                ok, frame = camera.read()
-                if not ok:
-                    break
+        if args.manual:
+            with torch.no_grad():
+                run_manual_mode(model, args.manual, device, cropper)
+            return
 
-                label, confidence = predict_image(model, frame, device)
-                overlay = f"{label} ({confidence * 100.0:.1f}%)"
+        camera = cv2.VideoCapture(0)
+        if not camera.isOpened():
+            raise RuntimeError("Unable to open webcam.")
 
-                cv2.putText(
-                    frame,
-                    overlay,
-                    (20, 40),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    1.0,
-                    (0, 255, 0),
-                    2,
-                    cv2.LINE_AA,
-                )
+        try:
+            with torch.no_grad():
+                while True:
+                    ok, frame = camera.read()
+                    if not ok:
+                        break
 
-                cv2.imshow("ASL Recognition", frame)
+                    x1, y1, x2, y2, source = detect_roi(frame, cropper)
+                    crop = frame[y1:y2, x1:x2]
+                    if crop.size == 0:
+                        smoother.clear()
+                        overlay = "No hand detected"
+                    else:
+                        probs = predict_probs(model, crop, device)
+                        smoothed = smoother.push(probs)
+                        label, confidence = decode_prediction(smoothed)
+                        overlay = f"{label} ({confidence * 100.0:.1f}%) [{source}]"
 
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord("q"):
-                    break
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    cv2.putText(
+                        frame,
+                        overlay,
+                        (20, 40),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1.0,
+                        (0, 255, 0),
+                        2,
+                        cv2.LINE_AA,
+                    )
+
+                    cv2.imshow("ASL Recognition", frame)
+
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord("q"):
+                        break
+        finally:
+            camera.release()
+            cv2.destroyAllWindows()
     finally:
-        camera.release()
-        cv2.destroyAllWindows()
+        if cropper is not None:
+            cropper.close()
 
 
 if __name__ == "__main__":
