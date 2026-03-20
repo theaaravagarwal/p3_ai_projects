@@ -9,6 +9,7 @@ import numpy as np
 import torch
 import torch.jit
 import torch.nn as nn
+import torchvision.models as tv_models
 
 
 IMAGE_SIZE = 128
@@ -51,6 +52,31 @@ class ASLModel(nn.Module):
         return self.classifier(flattened)
 
 
+class ASLResNet50Model(nn.Module):
+    def __init__(self, num_classes: int) -> None:
+        super().__init__()
+        self.backbone = tv_models.resnet50(weights=None)
+        in_features = self.backbone.fc.in_features
+        self.backbone.fc = nn.Linear(in_features, num_classes)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        return self.backbone(inputs)
+
+
+class ASLEfficientNetB0Model(nn.Module):
+    def __init__(self, num_classes: int) -> None:
+        super().__init__()
+        self.backbone = tv_models.efficientnet_b0(weights=None)
+        if isinstance(self.backbone.classifier, nn.Sequential) and len(self.backbone.classifier) >= 2:
+            in_features = self.backbone.classifier[-1].in_features
+            self.backbone.classifier[-1] = nn.Linear(in_features, num_classes)
+        else:
+            raise RuntimeError("Unexpected EfficientNet classifier structure.")
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        return self.backbone(inputs)
+
+
 _torch_load = torch.load
 
 
@@ -89,7 +115,24 @@ def load_model(model_path: str, device: torch.device) -> nn.Module:
     except RuntimeError:
         checkpoint = torch.load(model_path, map_location=device)
         state_dict = checkpoint.get("model_state_dict", checkpoint)
+        if isinstance(state_dict, dict) and "state_dict" in state_dict and isinstance(
+            state_dict["state_dict"], dict
+        ):
+            state_dict = state_dict["state_dict"]
+        elif isinstance(checkpoint, dict) and isinstance(checkpoint.get("state_dict"), dict):
+            state_dict = checkpoint["state_dict"]
+        if isinstance(state_dict, dict) and any(key.startswith("module.") for key in state_dict):
+            state_dict = {
+                (key[7:] if key.startswith("module.") else key): value
+                for key, value in state_dict.items()
+            }
         classifier_weight = state_dict.get("classifier.weight")
+        if not isinstance(classifier_weight, torch.Tensor):
+            classifier_weight = state_dict.get("backbone.fc.weight")
+        if not isinstance(classifier_weight, torch.Tensor):
+            classifier_weight = state_dict.get("backbone.classifier.1.weight")
+        if not isinstance(classifier_weight, torch.Tensor):
+            classifier_weight = state_dict.get("backbone.classifier.weight")
         num_classes = (
             classifier_weight.shape[0]
             if isinstance(classifier_weight, torch.Tensor)
@@ -105,6 +148,26 @@ def load_model(model_path: str, device: torch.device) -> nn.Module:
             CLASS_NAMES = [str(name) for name in checkpoint_names]
         elif len(CLASS_NAMES) != num_classes:
             CLASS_NAMES = [f"class_{i}" for i in range(num_classes)]
+
+        if (
+            isinstance(state_dict, dict)
+            and "backbone.conv1.weight" in state_dict
+            and "backbone.fc.weight" in state_dict
+        ):
+            model = ASLResNet50Model(num_classes=num_classes).to(device)
+            model.load_state_dict(state_dict)
+            model.eval()
+            return model
+
+        if (
+            isinstance(state_dict, dict)
+            and "backbone.features.0.0.weight" in state_dict
+            and "backbone.classifier.1.weight" in state_dict
+        ):
+            model = ASLEfficientNetB0Model(num_classes=num_classes).to(device)
+            model.load_state_dict(state_dict)
+            model.eval()
+            return model
 
         model = ASLModel(num_classes=num_classes).to(device)
         model.load_state_dict(state_dict)
