@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from collections import deque
 import os
+from pathlib import Path
 from typing import Optional
 import urllib.request
 
@@ -35,6 +36,8 @@ MEDIAPIPE_DEFAULT_MODEL_URL = (
 )
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_MEDIAPIPE_MODEL_PATH = os.path.join(PROJECT_ROOT, "model", "hand_landmarker.task")
+DEFAULT_BULK_ROOT = os.path.expanduser("~/.cache/kagglehub/datasets")
+VALID_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 HAND_CONNECTIONS: tuple[tuple[int, int], ...] = (
     (0, 1),
     (1, 2),
@@ -438,8 +441,9 @@ def _torch_load_with_map_call(*args, **kwargs):
 torch.load = _torch_load_with_map_call
 
 
-def preprocess_frame(frame: np.ndarray) -> torch.Tensor:
-    frame = preprocess_roi(frame)
+def preprocess_frame(frame: np.ndarray, use_roi_enhancement: bool = True) -> torch.Tensor:
+    if use_roi_enhancement:
+        frame = preprocess_roi(frame)
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     resized = cv2.resize(rgb_frame, (IMAGE_SIZE, IMAGE_SIZE), interpolation=cv2.INTER_LINEAR)
     normalized = resized.astype(np.float32) / 255.0
@@ -470,6 +474,38 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True, help="Path to the model checkpoint.")
     parser.add_argument("--manual", help="Path to a single image to run instead of webcam mode.")
+    parser.add_argument(
+        "--bulk",
+        action="store_true",
+        help=(
+            "Run inference over every image in a directory. "
+            "Use --bulk-dir to pick a dataset folder."
+        ),
+    )
+    parser.add_argument(
+        "--bulk-root",
+        default=DEFAULT_BULK_ROOT,
+        help=(
+            "Root directory to search when choosing a bulk folder interactively. "
+            f"Default: {DEFAULT_BULK_ROOT}"
+        ),
+    )
+    parser.add_argument(
+        "--bulk-dir",
+        default="",
+        help=(
+            "Directory of images to process in bulk mode. "
+            "If omitted, you will be prompted to choose from --bulk-root."
+        ),
+    )
+    parser.add_argument(
+        "--bulk-show",
+        default="",
+        help=(
+            "Comma-separated image names or 1-based indices to display in bulk mode. "
+            "Use 'all' to show every processed image."
+        ),
+    )
     parser.add_argument(
         "--disable-mediapipe",
         action="store_true",
@@ -517,7 +553,208 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Show an additional preview window of the isolated hand crop used for inference.",
     )
+    parser.add_argument(
+        "--frame-skip",
+        type=int,
+        default=2,
+        help="Run heavy webcam processing every N frames. 1 means process every frame.",
+    )
+    parser.add_argument(
+        "--webcam-width",
+        type=int,
+        default=640,
+        help="Requested webcam frame width for live mode. Set to 0 to keep the camera default.",
+    )
+    parser.add_argument(
+        "--webcam-height",
+        type=int,
+        default=480,
+        help="Requested webcam frame height for live mode. Set to 0 to keep the camera default.",
+    )
+    parser.add_argument(
+        "--webcam-enhance-crop",
+        action="store_true",
+        help="Apply the slower CLAHE/bilateral preprocessing path in webcam mode.",
+    )
     return parser.parse_args()
+
+
+def is_image_file(path: Path) -> bool:
+    return path.is_file() and path.suffix.lower() in VALID_IMAGE_EXTENSIONS
+
+
+def find_bulk_image_files(directory: str) -> list[str]:
+    root = Path(os.path.expanduser(directory))
+    if not root.is_dir():
+        raise RuntimeError(f"Bulk directory does not exist or is not a directory: {directory}")
+    files = [path for path in sorted(root.rglob("*")) if is_image_file(path)]
+    if not files:
+        raise RuntimeError(f"No supported image files found in: {directory}")
+    return [str(path) for path in files]
+
+
+def discover_bulk_directories(root: str) -> list[str]:
+    search_root = Path(os.path.expanduser(root))
+    if not search_root.exists():
+        return []
+
+    candidates: list[Path] = []
+    for current_root, dirnames, filenames in os.walk(search_root):
+        current_path = Path(current_root)
+        if any(Path(name).suffix.lower() in VALID_IMAGE_EXTENSIONS for name in filenames):
+            candidates.append(current_path)
+        dirnames[:] = [name for name in dirnames if not name.startswith(".")]
+
+    unique_candidates = sorted({str(path) for path in candidates})
+    return unique_candidates
+
+
+def choose_bulk_directory(root: str) -> str:
+    candidates = discover_bulk_directories(root)
+    if not candidates:
+        raise RuntimeError(
+            f"No image directories found under bulk root: {os.path.expanduser(root)}"
+        )
+    if len(candidates) == 1:
+        print(f"Using bulk directory: {candidates[0]}")
+        return candidates[0]
+
+    print("Choose a bulk directory:")
+    for idx, candidate in enumerate(candidates, start=1):
+        print(f"  {idx:>2}. {candidate}")
+
+    while True:
+        choice = input(f"Enter a number [1-{len(candidates)}]: ").strip()
+        try:
+            index = int(choice)
+        except ValueError:
+            print("Enter a numeric selection.")
+            continue
+        if 1 <= index <= len(candidates):
+            selected = candidates[index - 1]
+            print(f"Using bulk directory: {selected}")
+            return selected
+        print("Selection out of range.")
+
+
+def parse_bulk_show_selection(selection: str, image_files: list[str]) -> set[str]:
+    if not selection.strip():
+        return set()
+    tokens = [token.strip() for token in selection.split(",") if token.strip()]
+    if not tokens:
+        return set()
+    if any(token.lower() == "all" for token in tokens):
+        return {os.path.abspath(path) for path in image_files}
+
+    selected: set[str] = set()
+    basename_to_paths: dict[str, list[str]] = {}
+    for path in image_files:
+        basename_to_paths.setdefault(os.path.basename(path).lower(), []).append(path)
+
+    for token in tokens:
+        if token.isdigit():
+            index = int(token)
+            if 1 <= index <= len(image_files):
+                selected.add(os.path.abspath(image_files[index - 1]))
+            continue
+        token_lower = token.lower()
+        if token_lower in basename_to_paths:
+            selected.update(os.path.abspath(path) for path in basename_to_paths[token_lower])
+            continue
+        for path in image_files:
+            if token_lower in os.path.basename(path).lower():
+                selected.add(os.path.abspath(path))
+    return selected
+
+
+def annotate_image(
+    image: np.ndarray,
+    bbox: tuple[int, int, int, int],
+    label: str,
+    confidence: float,
+    source: str,
+    landmarks: Optional[list[tuple[int, int]]],
+) -> np.ndarray:
+    frame = image.copy()
+    x1, y1, x2, y2 = bbox
+    box_color = draw_detection_overlay(
+        frame,
+        x1,
+        y1,
+        x2,
+        y2,
+        source,
+        landmarks,
+        draw_landmarks=True,
+    )
+    overlay = f"{label} ({confidence * 100.0:.1f}%) [{source}]"
+    text_y = max(y1 - 10, 30)
+    cv2.putText(
+        frame,
+        overlay,
+        (x1, text_y),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.9,
+        box_color,
+        2,
+        cv2.LINE_AA,
+    )
+    return frame
+
+
+def run_bulk_mode(
+    model: nn.Module,
+    directory: str,
+    device: torch.device,
+    cropper: Optional[MediaPipeHandCropper],
+    show_isolated_hand: bool,
+    bulk_show_selection: str,
+) -> None:
+    image_files = find_bulk_image_files(directory)
+    selected_to_show = parse_bulk_show_selection(bulk_show_selection, image_files)
+
+    print(f"Found {len(image_files)} image(s) in {directory}")
+    if bulk_show_selection.strip() or len(image_files) <= 20:
+        print("Processing order:")
+        for index, image_path in enumerate(image_files, start=1):
+            print(f"  {index:>3}. {os.path.relpath(image_path, directory)}")
+    print("Processing in bulk mode...")
+
+    with torch.no_grad():
+        for index, image_path in enumerate(image_files, start=1):
+            image = cv2.imread(image_path)
+            if image is None:
+                print(f"[{index}/{len(image_files)}] {os.path.basename(image_path)} -> unreadable")
+                continue
+
+            x1, y1, x2, y2, source, landmarks = detect_roi(image, cropper)
+            crop = image[y1:y2, x1:x2]
+            if crop.size == 0:
+                print(f"[{index}/{len(image_files)}] {os.path.basename(image_path)} -> no hand detected")
+                continue
+
+            if source == "MediaPipe":
+                crop = isolate_hand_from_crop(crop, (x1, y1, x2, y2), landmarks)
+
+            probs = predict_probs(model, crop, device)
+            label, confidence = decode_prediction(probs)
+            print(
+                f"[{index}/{len(image_files)}] {os.path.basename(image_path)} -> "
+                f"{label} ({confidence * 100.0:.1f}%) [{source}]"
+            )
+
+            abs_path = os.path.abspath(image_path)
+            if selected_to_show and abs_path not in selected_to_show:
+                continue
+
+            annotated = annotate_image(image, (x1, y1, x2, y2), label, confidence, source, landmarks)
+            cv2.imshow("ASL Recognition", annotated)
+            if show_isolated_hand:
+                cv2.imshow("Isolated Hand", crop)
+            key = cv2.waitKey(0) & 0xFF
+            if key == ord("q"):
+                break
+    cv2.destroyAllWindows()
 
 
 def load_model(model_path: str, device: torch.device) -> nn.Module:
@@ -602,8 +839,13 @@ def load_model(model_path: str, device: torch.device) -> nn.Module:
             return model
 
 
-def predict_probs(model: nn.Module, image: np.ndarray, device: torch.device) -> np.ndarray:
-    input_tensor = preprocess_frame(image).to(device)
+def predict_probs(
+    model: nn.Module,
+    image: np.ndarray,
+    device: torch.device,
+    use_roi_enhancement: bool = True,
+) -> np.ndarray:
+    input_tensor = preprocess_frame(image, use_roi_enhancement=use_roi_enhancement).to(device)
     logits = model(input_tensor)
     probabilities = torch.softmax(logits, dim=1).squeeze(0).detach().cpu().numpy()
     return probabilities
@@ -769,6 +1011,124 @@ def run_manual_mode(
     cv2.destroyAllWindows()
 
 
+def run_webcam_mode(
+    model: nn.Module,
+    device: torch.device,
+    cropper: Optional[MediaPipeHandCropper],
+    show_isolated_hand: bool,
+    no_mp_landmarks: bool,
+    frame_skip: int,
+    webcam_width: int,
+    webcam_height: int,
+    use_roi_enhancement: bool,
+    smooth_window: int,
+) -> None:
+    camera = cv2.VideoCapture(0)
+    if not camera.isOpened():
+        raise RuntimeError("Unable to open webcam.")
+
+    if webcam_width > 0:
+        camera.set(cv2.CAP_PROP_FRAME_WIDTH, float(webcam_width))
+    if webcam_height > 0:
+        camera.set(cv2.CAP_PROP_FRAME_HEIGHT, float(webcam_height))
+    try:
+        camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    except Exception:
+        pass
+
+    frame_skip = max(1, int(frame_skip))
+    smoother = PredictionSmoother(window_size=smooth_window)
+    last_bbox: Optional[tuple[int, int, int, int]] = None
+    last_source = "Fallback"
+    last_landmarks: Optional[list[tuple[int, int]]] = None
+    last_overlay = "Searching for hand..."
+    last_box_color = (0, 255, 0)
+    last_isolated_preview: Optional[np.ndarray] = None
+    frame_index = 0
+
+    try:
+        with torch.inference_mode():
+            while True:
+                ok, frame = camera.read()
+                if not ok:
+                    break
+
+                should_refresh = frame_index % frame_skip == 0 or last_bbox is None
+                if should_refresh:
+                    x1, y1, x2, y2, source, landmarks = detect_roi(frame, cropper)
+                    crop = frame[y1:y2, x1:x2]
+                    if crop.size == 0:
+                        smoother.clear()
+                        last_bbox = None
+                        last_source = source
+                        last_landmarks = landmarks
+                        last_overlay = "No hand detected"
+                        last_isolated_preview = None
+                    else:
+                        if source == "MediaPipe":
+                            crop = isolate_hand_from_crop(crop, (x1, y1, x2, y2), landmarks)
+                        last_isolated_preview = crop.copy()
+                        probs = predict_probs(
+                            model,
+                            crop,
+                            device,
+                            use_roi_enhancement=use_roi_enhancement,
+                        )
+                        smoothed = smoother.push(probs)
+                        label, confidence = decode_prediction(smoothed)
+                        last_bbox = (x1, y1, x2, y2)
+                        last_source = source
+                        last_landmarks = landmarks
+                        last_overlay = f"{label} ({confidence * 100.0:.1f}%) [{source}]"
+                        last_box_color = (0, 0, 255) if source == "MediaPipe" else (0, 255, 0)
+
+                if last_bbox is not None:
+                    x1, y1, x2, y2 = last_bbox
+                    draw_detection_overlay(
+                        frame,
+                        x1,
+                        y1,
+                        x2,
+                        y2,
+                        last_source,
+                        last_landmarks,
+                        draw_landmarks=not no_mp_landmarks,
+                    )
+                    cv2.putText(
+                        frame,
+                        last_overlay,
+                        (20, 40),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1.0,
+                        last_box_color,
+                        2,
+                        cv2.LINE_AA,
+                    )
+                else:
+                    cv2.putText(
+                        frame,
+                        last_overlay,
+                        (20, 40),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1.0,
+                        (0, 255, 0),
+                        2,
+                        cv2.LINE_AA,
+                    )
+
+                cv2.imshow("ASL Recognition", frame)
+                if show_isolated_hand and last_isolated_preview is not None:
+                    cv2.imshow("Isolated Hand", last_isolated_preview)
+
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord("q"):
+                    break
+                frame_index += 1
+    finally:
+        camera.release()
+        cv2.destroyAllWindows()
+
+
 def main() -> None:
     args = parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -801,63 +1161,31 @@ def main() -> None:
                 )
             return
 
-        camera = cv2.VideoCapture(0)
-        if not camera.isOpened():
-            raise RuntimeError("Unable to open webcam.")
-
-        try:
+        if args.bulk:
+            bulk_dir = args.bulk_dir.strip() or choose_bulk_directory(args.bulk_root)
             with torch.no_grad():
-                while True:
-                    ok, frame = camera.read()
-                    if not ok:
-                        break
+                run_bulk_mode(
+                    model,
+                    bulk_dir,
+                    device,
+                    cropper,
+                    show_isolated_hand=args.show_isolated_hand,
+                    bulk_show_selection=args.bulk_show,
+                )
+            return
 
-                    x1, y1, x2, y2, source, landmarks = detect_roi(frame, cropper)
-                    crop = frame[y1:y2, x1:x2]
-                    isolated_preview = None
-                    if crop.size == 0:
-                        smoother.clear()
-                        overlay = "No hand detected"
-                    else:
-                        if source == "MediaPipe":
-                            crop = isolate_hand_from_crop(crop, (x1, y1, x2, y2), landmarks)
-                        isolated_preview = crop.copy()
-                        probs = predict_probs(model, crop, device)
-                        smoothed = smoother.push(probs)
-                        label, confidence = decode_prediction(smoothed)
-                        overlay = f"{label} ({confidence * 100.0:.1f}%) [{source}]"
-
-                    box_color = draw_detection_overlay(
-                        frame,
-                        x1,
-                        y1,
-                        x2,
-                        y2,
-                        source,
-                        landmarks,
-                        draw_landmarks=not args.no_mp_landmarks,
-                    )
-                    cv2.putText(
-                        frame,
-                        overlay,
-                        (20, 40),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        1.0,
-                        box_color,
-                        2,
-                        cv2.LINE_AA,
-                    )
-
-                    cv2.imshow("ASL Recognition", frame)
-                    if args.show_isolated_hand and isolated_preview is not None:
-                        cv2.imshow("Isolated Hand", isolated_preview)
-
-                    key = cv2.waitKey(1) & 0xFF
-                    if key == ord("q"):
-                        break
-        finally:
-            camera.release()
-            cv2.destroyAllWindows()
+        run_webcam_mode(
+            model=model,
+            device=device,
+            cropper=cropper,
+            show_isolated_hand=args.show_isolated_hand,
+            no_mp_landmarks=args.no_mp_landmarks,
+            frame_skip=args.frame_skip,
+            webcam_width=args.webcam_width,
+            webcam_height=args.webcam_height,
+            use_roi_enhancement=args.webcam_enhance_crop,
+            smooth_window=args.smooth_window,
+        )
     finally:
         if cropper is not None:
             cropper.close()
