@@ -26,7 +26,7 @@ except Exception:
     MPBaseOptions = None
 
 
-IMAGE_SIZE = 128
+IMAGE_SIZE = 224
 CLASS_NAMES = ["A", "B", "C", "D", "E"]
 MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
