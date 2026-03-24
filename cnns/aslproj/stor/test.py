@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import argparse
 from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 import urllib.request
 
 import cv2
@@ -720,9 +721,35 @@ def run_bulk_mode(
             print(f"  {index:>3}. {os.path.relpath(image_path, directory)}")
     print("Processing in bulk mode...")
 
+    def iter_loaded_images(paths: list[str]) -> Iterator[tuple[str, Optional[np.ndarray]]]:
+        if len(paths) <= 1:
+            for path in paths:
+                yield path, cv2.imread(path)
+            return
+
+        max_workers = min(8, max(1, os.cpu_count() or 1))
+        prefetch = max_workers * 2
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures: dict[int, Future[Optional[np.ndarray]]] = {}
+            submit_idx = 0
+
+            # Keep a bounded queue of reads in flight to avoid over-buffering memory.
+            while submit_idx < len(paths) and len(futures) < prefetch:
+                futures[submit_idx] = executor.submit(cv2.imread, paths[submit_idx])
+                submit_idx += 1
+
+            next_idx = 0
+            while next_idx < len(paths):
+                future = futures.pop(next_idx)
+                yield paths[next_idx], future.result()
+                next_idx += 1
+
+                if submit_idx < len(paths):
+                    futures[submit_idx] = executor.submit(cv2.imread, paths[submit_idx])
+                    submit_idx += 1
+
     with torch.no_grad():
-        for index, image_path in enumerate(image_files, start=1):
-            image = cv2.imread(image_path)
+        for index, (image_path, image) in enumerate(iter_loaded_images(image_files), start=1):
             if image is None:
                 print(f"[{index}/{len(image_files)}] {os.path.basename(image_path)} -> unreadable")
                 continue
