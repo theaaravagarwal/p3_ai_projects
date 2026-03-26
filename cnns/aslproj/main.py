@@ -2,7 +2,6 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "kagglehub>=0.3.13",
 #   "matplotlib>=3.10.0",
 #   "mediapipe>=0.10.21",
 #   "numpy>=2.2.0",
@@ -30,9 +29,7 @@ import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
-import kagglehub
 import matplotlib.pyplot as plt
 import mediapipe as mp
 import numpy as np
@@ -59,11 +56,6 @@ except ModuleNotFoundError:
     train_test_split = None
 
 
-DATASET_HANDLES = (
-    "grassknoted/asl-alphabet",
-    "debashishsau/aslamerican-sign-language-aplhabet-dataset",
-    "danrasband/asl-alphabet-test",
-)
 CLASS_NAMES = ("A", "B", "C", "D", "E")
 CLASS_TO_IDX = {name: index for index, name in enumerate(CLASS_NAMES)}
 TARGET_LABELS = set(CLASS_NAMES)
@@ -101,7 +93,13 @@ _PROCESS_CROPPER_ATEXIT_REGISTERED = False
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train an A-E ASL classifier from a triple-source master pool.")
+    parser = argparse.ArgumentParser(description="Train an A-E ASL classifier from a local data directory.")
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=Path("data"),
+        help="Dataset root. Supports either class folders directly (`data/A..E`) or explicit `data/train` + `data/test`.",
+    )
     parser.add_argument("--output-dir", type=Path, default=Path("artifacts"), help="Directory for training artifacts.")
     parser.add_argument("--mediapipe-model-path", type=Path, default=DEFAULT_MEDIAPIPE_MODEL_PATH, help="Local Hand Landmarker task bundle.")
     parser.add_argument("--image-size", type=int, default=128, help="Final crop size.")
@@ -110,7 +108,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--epochs", type=int, default=20, help="Number of training epochs.")
     parser.add_argument("--lr", type=float, default=3e-4, help="AdamW learning rate.")
     parser.add_argument("--weight-decay", type=float, default=1e-4, help="AdamW weight decay.")
-    parser.add_argument("--val-ratio", type=float, default=0.20, help="Validation ratio for the global master pool split.")
+    parser.add_argument("--val-ratio", type=float, default=0.20, help="Validation ratio used when splitting a single class-folder dataset.")
     parser.add_argument(
         "--num-workers",
         type=int,
@@ -128,7 +126,7 @@ def parse_args() -> argparse.Namespace:
         default=0.0,
         help="Optional horizontal flip probability. Default is 0.0 because hand orientation can change sign appearance.",
     )
-    parser.add_argument("--max-samples", type=int, default=0, help="Optional cap on the merged master pool for debugging.")
+    parser.add_argument("--max-samples", type=int, default=0, help="Optional cap on the combined train+test pool for debugging.")
     parser.add_argument("--debug", action="store_true", help="Print dataset discovery details.")
     args = parser.parse_args()
     if not 0.0 <= args.horizontal_flip_prob <= 1.0:
@@ -141,6 +139,8 @@ def parse_args() -> argparse.Namespace:
         raise ValueError("--prefetch-factor must be >= 1.")
     if args.target_vram_gb <= 0:
         raise ValueError("--target-vram-gb must be > 0.")
+    if not 0.0 < args.val_ratio < 1.0:
+        raise ValueError("--val-ratio must be between 0 and 1 (exclusive).")
     return args
 
 
@@ -309,22 +309,64 @@ def discover_samples_under_root(root: Path, source_name: str, debug: bool = Fals
     return samples
 
 
-def download_dataset(handle: str) -> Path:
-    resolved = Path(kagglehub.dataset_download(handle))
-    print(f"Using dataset {handle} at {resolved}")
-    return resolved
+def split_samples_with_sklearn(
+    samples: list[ImageSample],
+    val_ratio: float,
+    seed: int,
+) -> tuple[list[ImageSample], list[ImageSample]]:
+    labels = [sample.label_idx for sample in samples]
+    train_indices, val_indices = train_test_split(
+        list(range(len(samples))),
+        test_size=val_ratio,
+        random_state=seed,
+        shuffle=True,
+        stratify=labels,
+    )
+    train_samples = [
+        ImageSample(
+            path=samples[index].path,
+            label_name=samples[index].label_name,
+            label_idx=samples[index].label_idx,
+            source_name="train",
+        )
+        for index in train_indices
+    ]
+    val_samples = [
+        ImageSample(
+            path=samples[index].path,
+            label_name=samples[index].label_name,
+            label_idx=samples[index].label_idx,
+            source_name="test",
+        )
+        for index in val_indices
+    ]
+    return train_samples, val_samples
 
 
-def build_master_pool(handles: Iterable[str], debug: bool = False) -> list[ImageSample]:
-    master_pool: list[ImageSample] = []
-    for handle in handles:
-        dataset_root = download_dataset(handle)
-        discovered = discover_samples_under_root(dataset_root, source_name=handle, debug=debug)
-        if not discovered:
-            raise ValueError(f"No A-E image samples were discovered under dataset {handle} at {dataset_root}")
-        master_pool.extend(discovered)
-        print(f"  {handle} -> {len(discovered)} A-E images")
-    return master_pool
+def build_splits_from_data_dir(
+    data_dir: Path,
+    val_ratio: float,
+    seed: int,
+    debug: bool = False,
+) -> tuple[list[ImageSample], list[ImageSample]]:
+    train_root = data_dir / "train"
+    test_root = data_dir / "test"
+    if train_root.is_dir() and test_root.is_dir():
+        train_samples = discover_samples_under_root(train_root, source_name="train", debug=debug)
+        val_samples = discover_samples_under_root(test_root, source_name="test", debug=debug)
+        if not train_samples:
+            raise ValueError(f"No A-E image samples discovered under {train_root}")
+        if not val_samples:
+            raise ValueError(f"No A-E image samples discovered under {test_root}")
+        return train_samples, val_samples
+
+    pool_samples = discover_samples_under_root(data_dir, source_name="pool", debug=debug)
+    if not pool_samples:
+        raise ValueError(
+            f"No A-E image samples discovered under {data_dir}. "
+            f"Use either `{data_dir}/A..E` or `{data_dir}/train` + `{data_dir}/test`."
+        )
+    return split_samples_with_sklearn(pool_samples, val_ratio=val_ratio, seed=seed)
 
 
 def maybe_cap_samples(samples: list[ImageSample], max_samples: int, seed: int) -> list[ImageSample]:
@@ -334,18 +376,6 @@ def maybe_cap_samples(samples: list[ImageSample], max_samples: int, seed: int) -
     sampled = samples.copy()
     rng.shuffle(sampled)
     return sampled[:max_samples]
-
-
-def split_master_pool(samples: list[ImageSample], val_ratio: float, seed: int) -> tuple[list[ImageSample], list[ImageSample]]:
-    labels = [sample.label_idx for sample in samples]
-    train_samples, val_samples = train_test_split(
-        samples,
-        test_size=val_ratio,
-        random_state=seed,
-        shuffle=True,
-        stratify=labels,
-    )
-    return list(train_samples), list(val_samples)
 
 
 def print_dataset_summary(name: str, samples: Iterable[ImageSample]) -> None:
@@ -828,12 +858,22 @@ def main() -> None:
     print(f"Classes: {', '.join(CLASS_NAMES)}")
     print(f"Pipeline mode: {'raw full-frame' if args.raw_train else 'MediaPipe hand-localized crop'}")
 
-    master_pool = build_master_pool(DATASET_HANDLES, debug=args.debug)
-    master_pool = maybe_cap_samples(master_pool, args.max_samples, args.seed)
-    print(f"Master pool size: {len(master_pool)}")
-    print_dataset_summary("Master pool", master_pool)
-
-    train_samples, val_samples = split_master_pool(master_pool, val_ratio=args.val_ratio, seed=args.seed)
+    initial_train_samples, initial_val_samples = build_splits_from_data_dir(
+        args.data_dir,
+        val_ratio=args.val_ratio,
+        seed=args.seed,
+        debug=args.debug,
+    )
+    combined_samples = maybe_cap_samples(initial_train_samples + initial_val_samples, args.max_samples, args.seed)
+    print(f"Combined pool size: {len(combined_samples)}")
+    print_dataset_summary("Combined pool", combined_samples)
+    train_samples = [sample for sample in combined_samples if sample.source_name == "train"]
+    val_samples = [sample for sample in combined_samples if sample.source_name == "test"]
+    if not train_samples or not val_samples:
+        raise ValueError(
+            "After applying --max-samples, one split became empty. "
+            "Increase --max-samples or disable it by setting 0."
+        )
     print(f"Train samples: {len(train_samples)}")
     print(f"Val samples: {len(val_samples)}")
     print_dataset_summary("Train", train_samples)
