@@ -9,8 +9,8 @@ import io
 import subprocess
 from dataclasses import dataclass
 from contextlib import nullcontext
+from pathlib import Path
 
-import kagglehub
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -44,35 +44,10 @@ CLASSES = [
 ]
 SEED = 67
 DATASET_OPTIONS = {
-    "grassknoted": {
-        "kaggle_id": "grassknoted/asl-alphabet",
-        "output_tag": "grassknoted",
+    "local": {
+        "output_tag": "local",
         "train_dir_candidates": [
             "",
-            "asl_alphabet_train",
-            os.path.join("asl_alphabet_train", "asl_alphabet_train"),
-            "train",
-            "Train",
-        ],
-    },
-    "synthetic": {
-        "kaggle_id": "lexset/synthetic-asl-alphabet",
-        "output_tag": "synthetic",
-        "train_dir_candidates": [
-            "",
-            "Train_Alphabet",
-            "train",
-            "Train",
-        ],
-    },
-    "asl-citizen": {
-        "kaggle_id": "abd0kamel/asl-citizen",
-        "output_tag": "asl_citizen",
-        "train_dir_candidates": [
-            "",
-            "asl-citizen",
-            "asl_citizen",
-            "ASL_Citizen",
             "train",
             "Train",
         ],
@@ -99,7 +74,6 @@ class RuntimeConfig:
 @dataclass(frozen=True)
 class DatasetConfig:
     key: str
-    kaggle_id: str
     output_tag: str
     train_dir_candidates: list[str]
 
@@ -176,10 +150,16 @@ def parse_args():
         description="Train an ASL classifier on the first five letters."
     )
     parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=Path("data"),
+        help="Local dataset directory containing class folders A-E.",
+    )
+    parser.add_argument(
         "--dataset",
         choices=sorted(DATASET_OPTIONS),
-        default="grassknoted",
-        help="Which dataset source to train on.",
+        default="local",
+        help="Dataset preset for local folder layouts.",
     )
     parser.add_argument(
         "--device",
@@ -200,7 +180,6 @@ def get_dataset_config(dataset_key: str) -> DatasetConfig:
     config = DATASET_OPTIONS[dataset_key]
     return DatasetConfig(
         key=dataset_key,
-        kaggle_id=config["kaggle_id"],
         output_tag=config["output_tag"],
         train_dir_candidates=config["train_dir_candidates"],
     )
@@ -1444,11 +1423,8 @@ def main():
     dataset_config = get_dataset_config(args.dataset)
 
     print("--- Checking Dataset Status ---")
-    dataset_path = kagglehub.dataset_download(dataset_config.kaggle_id)
-    if dataset_config.key == "asl-citizen":
-        train_dir = os.path.join(dataset_path, "splits")
-    else:
-        train_dir = resolve_train_dir(dataset_path, dataset_config.train_dir_candidates)
+    dataset_root = os.path.abspath(os.path.expanduser(str(args.data_dir)))
+    train_dir = resolve_train_dir(dataset_root, dataset_config.train_dir_candidates)
 
     seed_everything(SEED)
     runtime = configure_runtime(args.device, args.amp)
@@ -1459,15 +1435,12 @@ def main():
     final_model_path = f"asl_classifier_top5_{dataset_config.output_tag}.pt"
     curve_path = f"training_accuracy_{dataset_config.output_tag}.png"
 
-    print(f"Using dataset: {dataset_config.kaggle_id}")
+    print(f"Using local dataset root: {dataset_root}")
     print(f"Training directory: {train_dir}")
     print(f"Best checkpoint path: {best_model_path}")
     print(f"Final checkpoint path: {final_model_path}")
 
-    if dataset_config.key == "asl-citizen":
-        train_ds, val_ds = build_asl_citizen_datasets(dataset_path)
-    else:
-        train_ds, val_ds = build_datasets(train_dir)
+    train_ds, val_ds = build_datasets(train_dir)
 
     num_workers = resolve_num_workers(runtime.cpu_threads)
     pickle_reader_workers = resolve_pickle_reader_workers(

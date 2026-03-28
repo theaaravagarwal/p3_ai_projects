@@ -119,7 +119,7 @@ def _unwrap_state_dict(checkpoint_obj: Any) -> dict[str, torch.Tensor] | None:
 
 
 def _load_checkpoint(model: nn.Module, checkpoint_path: str) -> str:
-    obj = torch.load(checkpoint_path, map_location="cpu")
+    obj = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     if isinstance(obj, nn.Module):
         model.load_state_dict(obj.state_dict(), strict=False)
         return "Loaded weights from nn.Module checkpoint with strict=False."
@@ -207,7 +207,7 @@ def inspect_state_dict(state_dict: dict[str, torch.Tensor]) -> dict[str, Any]:
 
 
 def load_model_from_artifact(model_path: str) -> tuple[nn.Module | None, dict[str, torch.Tensor] | None, list[str]]:
-    obj = torch.load(model_path, map_location="cpu")
+    obj = torch.load(model_path, map_location="cpu", weights_only=False)
     notes: list[str] = []
 
     if isinstance(obj, nn.Module):

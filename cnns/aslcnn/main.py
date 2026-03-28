@@ -2,13 +2,13 @@ import os
 import random
 import argparse
 from dataclasses import dataclass
+from pathlib import Path
 
-import kagglehub
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch import nn
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
 from torchvision import transforms
 from torchvision.datasets.folder import default_loader
 
@@ -24,29 +24,8 @@ CLASSES = [
     "E",
 ]
 SEED = 42
-DATASET_OPTIONS = {
-    "grassknoted": {
-        "kaggle_id": "grassknoted/asl-alphabet",
-        "output_tag": "grassknoted",
-        "train_dir_candidates": [
-            "",
-            "asl_alphabet_train",
-            os.path.join("asl_alphabet_train", "asl_alphabet_train"),
-            "train",
-            "Train",
-        ],
-    },
-    "synthetic": {
-        "kaggle_id": "lexset/synthetic-asl-alphabet",
-        "output_tag": "synthetic",
-        "train_dir_candidates": [
-            "",
-            "Train_Alphabet",
-            "train",
-            "Train",
-        ],
-    },
-}
+CLASS_SET = set(CLASSES)
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 CHANNEL_MEAN = (0.485, 0.456, 0.406)
 CHANNEL_STD = (0.229, 0.224, 0.225)
 
@@ -56,14 +35,6 @@ class RuntimeConfig:
     device: torch.device
     use_amp: bool
     cpu_threads: int
-
-
-@dataclass(frozen=True)
-class DatasetConfig:
-    key: str
-    kaggle_id: str
-    output_tag: str
-    train_dir_candidates: list[str]
 
 
 def configure_runtime() -> RuntimeConfig:
@@ -91,22 +62,12 @@ def parse_args():
         description="Train an ASL classifier on the first five letters."
     )
     parser.add_argument(
-        "--dataset",
-        choices=sorted(DATASET_OPTIONS),
-        default="grassknoted",
-        help="Which dataset source to train on.",
+        "--data-dir",
+        type=Path,
+        default=Path("data"),
+        help="Local dataset directory containing class folders A, B, C, D, E.",
     )
     return parser.parse_args()
-
-
-def get_dataset_config(dataset_key: str) -> DatasetConfig:
-    config = DATASET_OPTIONS[dataset_key]
-    return DatasetConfig(
-        key=dataset_key,
-        kaggle_id=config["kaggle_id"],
-        output_tag=config["output_tag"],
-        train_dir_candidates=config["train_dir_candidates"],
-    )
 
 
 def resolve_batch_size(device: torch.device, train_size: int) -> int:
@@ -158,6 +119,71 @@ class FilteredImageDataset(torch.utils.data.Dataset):
         if self.transform is not None:
             image = self.transform(image)
         return image, target
+
+
+def is_image_file(path: Path) -> bool:
+    return path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES
+
+
+def normalize_label_token(token: str) -> str | None:
+    cleaned = token.strip().upper()
+    return cleaned if cleaned in CLASS_SET else None
+
+
+def infer_label_from_filename(path: Path) -> str | None:
+    stem = path.stem.upper()
+    for candidate in (stem, stem.split("_", 1)[0], stem.split("-", 1)[0]):
+        label = normalize_label_token(candidate)
+        if label is not None:
+            return label
+    return None
+
+
+def discover_class_directories(root: Path) -> list[Path]:
+    if not root.is_dir():
+        return []
+    if root.name in CLASS_SET:
+        return [root]
+    return sorted(
+        (path for path in root.iterdir() if path.is_dir() and path.name in CLASS_SET),
+        key=lambda path: path.as_posix().lower(),
+    )
+
+
+def discover_samples_under_root(root: Path) -> list[tuple[str, int]]:
+    samples: list[tuple[str, int]] = []
+    seen_paths: set[Path] = set()
+    class_to_idx = {name: idx for idx, name in enumerate(CLASSES)}
+
+    class_directories = discover_class_directories(root)
+    if class_directories:
+        for class_dir in class_directories:
+            label_name = class_dir.name
+            for image_path in sorted(
+                (path for path in class_dir.rglob("*") if is_image_file(path)),
+                key=lambda path: path.as_posix().lower(),
+            ):
+                resolved = image_path.resolve()
+                if resolved in seen_paths:
+                    continue
+                seen_paths.add(resolved)
+                samples.append((image_path.as_posix(), class_to_idx[label_name]))
+        if samples:
+            return samples
+
+    for image_path in sorted(
+        (path for path in root.rglob("*") if is_image_file(path)),
+        key=lambda path: path.as_posix().lower(),
+    ):
+        label_name = infer_label_from_filename(image_path)
+        if label_name is None:
+            continue
+        resolved = image_path.resolve()
+        if resolved in seen_paths:
+            continue
+        seen_paths.add(resolved)
+        samples.append((image_path.as_posix(), class_to_idx[label_name]))
+    return samples
 
 
 class SEBlock(nn.Module):
@@ -240,26 +266,53 @@ class ResidualASLBlock(nn.Module):
         return self.act(x)
 
 
-def build_datasets(root_dir: str):
-    from torchvision.datasets import ImageFolder
+def stratified_split(samples: list[tuple[str, int]]) -> tuple[list[tuple[str, int]], list[tuple[str, int]]]:
+    grouped: dict[int, list[tuple[str, int]]] = {}
+    for sample in samples:
+        grouped.setdefault(sample[1], []).append(sample)
 
-    folder_dataset = ImageFolder(root_dir)
+    missing_classes = [name for idx, name in enumerate(CLASSES) if idx not in grouped]
+    if missing_classes:
+        raise ValueError(f"Missing class folders or samples: {missing_classes}")
 
-    missing = [name for name in CLASSES if name not in folder_dataset.class_to_idx]
-    if missing:
-        raise ValueError(f"Missing class folders: {missing}")
+    train_samples: list[tuple[str, int]] = []
+    val_samples: list[tuple[str, int]] = []
+    rng = random.Random(SEED)
+    for label_idx in range(len(CLASSES)):
+        class_samples = grouped[label_idx]
+        if len(class_samples) < 2:
+            raise ValueError(
+                f"Class {CLASSES[label_idx]} requires at least 2 images for 80/20 split."
+            )
+        class_copy = class_samples.copy()
+        rng.shuffle(class_copy)
+        val_count = max(1, int(round(len(class_copy) * 0.2)))
+        if val_count >= len(class_copy):
+            val_count = len(class_copy) - 1
+        val_samples.extend(class_copy[:val_count])
+        train_samples.extend(class_copy[val_count:])
+    return train_samples, val_samples
 
-    class_to_new_idx = {
-        folder_dataset.class_to_idx[name]: idx for idx, name in enumerate(CLASSES)
-    }
 
-    filtered_samples = []
-    for path, target in folder_dataset.samples:
-        if target in class_to_new_idx:
-            filtered_samples.append((path, class_to_new_idx[target]))
+def build_datasets(dataset_root: Path):
+    dataset_root = dataset_root.expanduser().resolve()
+    if not dataset_root.is_dir():
+        raise FileNotFoundError(f"Dataset root is not a directory: {dataset_root}")
 
-    if not filtered_samples:
-        raise ValueError("No samples found for requested classes.")
+    explicit_train = dataset_root / "train"
+    explicit_test = dataset_root / "test"
+    if explicit_train.is_dir() and explicit_test.is_dir():
+        train_samples = discover_samples_under_root(explicit_train)
+        val_samples = discover_samples_under_root(explicit_test)
+        if not train_samples or not val_samples:
+            raise ValueError("Explicit train/test layout found, but one split is empty.")
+    else:
+        discovered = discover_samples_under_root(dataset_root)
+        if not discovered:
+            raise ValueError(
+                f"No A-E samples discovered under local dataset root: {dataset_root}"
+            )
+        train_samples, val_samples = stratified_split(discovered)
 
     train_transform = transforms.Compose(
         [
@@ -294,62 +347,9 @@ def build_datasets(root_dir: str):
         ]
     )
 
-    train_dataset = FilteredImageDataset(filtered_samples, transform=train_transform)
-    val_dataset = FilteredImageDataset(filtered_samples, transform=val_transform)
-
-    total = len(filtered_samples)
-    val_size = int(total * 0.2)
-    train_size = total - val_size
-
-    g = torch.Generator().manual_seed(SEED)
-    indices = torch.randperm(total, generator=g).tolist()
-    val_indices = indices[:val_size]
-    train_indices = indices[val_size:]
-
-    train_subset = Subset(train_dataset, train_indices)
-    val_subset = Subset(val_dataset, val_indices)
-
-    return train_subset, val_subset
-
-
-def resolve_train_dir(dataset_path: str, dir_candidates: list[str]) -> str:
-    candidates = [
-        dataset_path
-        if relative_path == ""
-        else os.path.join(dataset_path, relative_path)
-        for relative_path in dir_candidates
-    ]
-
-    checked = []
-    for candidate in candidates:
-        if not os.path.isdir(candidate):
-            checked.append(candidate)
-            continue
-
-        class_dirs = {
-            name
-            for name in os.listdir(candidate)
-            if os.path.isdir(os.path.join(candidate, name))
-        }
-        if all(name in class_dirs for name in CLASSES):
-            return candidate
-        checked.append(candidate)
-
-        nested_dirs = [os.path.join(candidate, name) for name in class_dirs]
-        for nested_dir in nested_dirs:
-            nested_class_dirs = {
-                name
-                for name in os.listdir(nested_dir)
-                if os.path.isdir(os.path.join(nested_dir, name))
-            }
-            if all(name in nested_class_dirs for name in CLASSES):
-                return nested_dir
-            checked.append(nested_dir)
-
-    raise FileNotFoundError(
-        "Could not find a training directory containing class folders "
-        f"{CLASSES}. Checked: " + ", ".join(checked)
-    )
+    train_dataset = FilteredImageDataset(train_samples, transform=train_transform)
+    val_dataset = FilteredImageDataset(val_samples, transform=val_transform)
+    return train_dataset, val_dataset
 
 
 def build_model(num_classes: int) -> nn.Module:
@@ -452,25 +452,20 @@ def evaluate(model, loader, criterion, device):
 
 def main():
     args = parse_args()
-    dataset_config = get_dataset_config(args.dataset)
-
-    print("--- Checking Dataset Status ---")
-    dataset_path = kagglehub.dataset_download(dataset_config.kaggle_id)
-    train_dir = resolve_train_dir(dataset_path, dataset_config.train_dir_candidates)
+    output_tag = args.data_dir.name or "local"
 
     seed_everything(SEED)
     runtime = configure_runtime()
 
-    best_model_path = f"best_asl_classifier_top5_{dataset_config.output_tag}.pt"
-    final_model_path = f"asl_classifier_top5_{dataset_config.output_tag}.pt"
-    curve_path = f"training_accuracy_{dataset_config.output_tag}.png"
+    best_model_path = f"best_asl_classifier_top5_{output_tag}.pt"
+    final_model_path = f"asl_classifier_top5_{output_tag}.pt"
+    curve_path = f"training_accuracy_{output_tag}.png"
 
-    print(f"Using dataset: {dataset_config.kaggle_id}")
-    print(f"Training directory: {train_dir}")
+    print(f"Using local dataset root: {args.data_dir.expanduser().resolve()}")
     print(f"Best checkpoint path: {best_model_path}")
     print(f"Final checkpoint path: {final_model_path}")
 
-    train_ds, val_ds = build_datasets(train_dir)
+    train_ds, val_ds = build_datasets(args.data_dir)
     batch_size = resolve_batch_size(runtime.device, len(train_ds))
 
     # num_workers = min(4, runtime.cpu_threads)

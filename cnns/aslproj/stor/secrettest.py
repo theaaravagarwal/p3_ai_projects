@@ -48,6 +48,8 @@ CLASS_NAMES = ["A", "B", "C", "D", "E"]
 NO_DETECTION_LABEL = "__NO_DETECTION__"
 MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+USE_GRAYSCALE_PREPROCESSING = True
+GAMMA_CORRECTION = 1.05
 MEDIAPIPE_MODEL_ENV = "MEDIAPIPE_HAND_LANDMARKER_MODEL"
 MEDIAPIPE_DEFAULT_MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
@@ -703,12 +705,35 @@ def _torch_load_with_map_call(*args, **kwargs):
 torch.load = _torch_load_with_map_call
 
 
+def _apply_gamma_correction(image: np.ndarray, gamma: float) -> np.ndarray:
+    if gamma <= 0:
+        return image
+    inv_gamma = 1.0 / float(gamma)
+    table = np.array(
+        [((idx / 255.0) ** inv_gamma) * 255.0 for idx in range(256)],
+        dtype=np.uint8,
+    )
+    return cv2.LUT(image, table)
+
+
 def preprocess_frame(frame: np.ndarray, use_roi_enhancement: bool = True) -> torch.Tensor:
     if use_roi_enhancement:
         frame = preprocess_roi(frame)
-    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    resized = cv2.resize(rgb_frame, (IMAGE_SIZE, IMAGE_SIZE), interpolation=cv2.INTER_LINEAR)
-    normalized = resized.astype(np.float32) / 255.0
+    if USE_GRAYSCALE_PREPROCESSING:
+        if frame.ndim == 2:
+            gray_frame = frame
+        elif frame.shape[2] == 4:
+            gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2GRAY)
+        else:
+            gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray_frame = _apply_gamma_correction(gray_frame, GAMMA_CORRECTION)
+        resized = cv2.resize(gray_frame, (IMAGE_SIZE, IMAGE_SIZE), interpolation=cv2.INTER_LINEAR)
+        normalized = resized.astype(np.float32) / 255.0
+        normalized = np.repeat(normalized[..., None], 3, axis=2)
+    else:
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        resized = cv2.resize(rgb_frame, (IMAGE_SIZE, IMAGE_SIZE), interpolation=cv2.INTER_LINEAR)
+        normalized = resized.astype(np.float32) / 255.0
     normalized = (normalized - MEAN) / STD
     tensor = torch.from_numpy(normalized).permute(2, 0, 1).unsqueeze(0)
     return tensor
