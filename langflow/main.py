@@ -25,11 +25,13 @@ from src.openai_config import (
     DEFAULT_MAX_OUTPUT_TOKENS,
     DEFAULT_MODEL,
     DEFAULT_TEMPERATURE,
+    get_active_model,
     get_max_history_messages,
     get_max_output_tokens,
-    get_openai_model,
+    get_request_timeout_seconds,
     get_temperature,
-    has_openai_api_key,
+    has_active_api_key,
+    supports_custom_temperature,
 )
 
 
@@ -49,7 +51,7 @@ def setup_env(force: bool = False) -> Path:
 
     shutil.copyfile(ENV_EXAMPLE, ENV_FILE)
     print(f"Created {ENV_FILE} from .env.example")
-    print("Add your real OpenAI key to OPENAI_API_KEY, then rerun the app.")
+    print("Add your real OPENAI_API_KEY, then rerun the app.")
     return ENV_FILE
 
 
@@ -92,16 +94,20 @@ def print_status() -> None:
     print("=" * 60)
     print(f"Project root: {ROOT}")
     print(f".env present: {'yes' if ENV_FILE.exists() else 'no'}")
-    print(f"OpenAI key configured: {'yes' if has_openai_api_key() else 'no'}")
-    print(f"Model: {get_openai_model()}")
+    print(f"Active API key configured: {'yes' if has_active_api_key() else 'no'}")
+    print(f"Active model: {get_active_model()}")
     print(f"Max output tokens: {get_max_output_tokens()}")
     print(f"Max history messages: {get_max_history_messages()}")
-    print(f"Temperature: {get_temperature()}")
+    print(f"Request timeout seconds: {get_request_timeout_seconds()}")
+    if supports_custom_temperature(get_active_model()):
+        print(f"Temperature: {get_temperature()}")
+    else:
+        print(f"Temperature: default only for {get_active_model()} (custom values ignored)")
     print(
         "Recommended default: "
         f"{DEFAULT_MODEL}, {DEFAULT_MAX_OUTPUT_TOKENS} tokens, "
         f"{DEFAULT_MAX_HISTORY_MESSAGES} history messages, "
-        f"temperature {DEFAULT_TEMPERATURE}"
+        f"temperature {DEFAULT_TEMPERATURE} for older non-reasoning models"
     )
     print("=" * 60)
 
@@ -122,9 +128,17 @@ def run_api(reload: bool = False) -> None:
 
 def run_tests() -> int:
     from tests.test_prompts import run_tests as run_prompt_tests, test_conversation_flow
+    from tests.test_openai_config import (
+        test_gpt5_models_skip_custom_temperature,
+        test_older_models_keep_temperature,
+        test_request_timeout_default_is_set,
+    )
 
     results = run_prompt_tests()
     flow_ok = test_conversation_flow()
+    test_gpt5_models_skip_custom_temperature()
+    test_older_models_keep_temperature()
+    test_request_timeout_default_is_set()
 
     passed = sum(1 for item in results if item.get("status") == "PASSED")
     failed = sum(1 for item in results if item.get("status") == "FAILED")

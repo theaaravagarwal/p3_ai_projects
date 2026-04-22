@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Test suite for Assistant
-Tests the chatbot with 5+ diverse prompts covering trivia, explanation, support, and safety
+Tests the chatbot with AP Physics 2-focused prompts and safety boundaries.
 """
 
 import os
@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dotenv import load_dotenv
 from src.bot import create_message_with_history, CHATBOT_CONFIG
+from src.openai_config import has_active_api_key
 
 # Load environment variables
 load_dotenv()
@@ -21,33 +22,33 @@ load_dotenv()
 TEST_CASES = [
     {
         "id": 1,
-        "category": "Trivia - Space",
-        "prompt": "What is a neutron star in simple terms?",
-        "expected_behavior": "Explains the concept clearly with a short analogy"
+        "category": "Fluids - Pressure",
+        "prompt": "In AP Physics 2 terms, explain why pressure increases with depth in a fluid.",
+        "expected_behavior": "Uses hydrostatic pressure idea and clear AP-level explanation"
     },
     {
         "id": 2,
-        "category": "Trivia - History",
-        "prompt": "Why was the Library of Alexandria famous?",
-        "expected_behavior": "Gives a concise factual summary"
+        "category": "Thermodynamics - First Law",
+        "prompt": "What does Delta U = Q - W mean and how should I use signs on the AP exam?",
+        "expected_behavior": "Explains first law with sign conventions and exam guidance"
     },
     {
         "id": 3,
-        "category": "Writing - Brainstorming",
-        "prompt": "Help me brainstorm names for a sci-fi spaceship.",
-        "expected_behavior": "Offers multiple creative options without overexplaining"
+        "category": "Circuits - Equivalent Resistance",
+        "prompt": "How do I find equivalent resistance for two resistors in parallel?",
+        "expected_behavior": "Gives correct formula and concise step-by-step process"
     },
     {
         "id": 4,
-        "category": "Support - Stress",
-        "prompt": "I had a rough day and need something calming to read.",
-        "expected_behavior": "Responds supportively and gently"
+        "category": "Electromagnetism - Right-Hand Rule",
+        "prompt": "Can you quickly teach me the right-hand rule for magnetic force direction?",
+        "expected_behavior": "Explains direction rule with variables and a simple cue"
     },
     {
         "id": 5,
-        "category": "General - Comparison",
-        "prompt": "What is the difference between a comet and an asteroid?",
-        "expected_behavior": "Compares the two in a clear bullet-friendly way"
+        "category": "Optics - Lenses",
+        "prompt": "How do I use the thin lens equation and sign conventions on AP Physics 2?",
+        "expected_behavior": "Covers equation usage and sign choices clearly"
     },
     {
         "id": 6,
@@ -70,7 +71,7 @@ def run_tests():
     print(f"Testing {CHATBOT_CONFIG['name']} ({CHATBOT_CONFIG['avatar']})")
     print(f"{'='*70}\n")
     
-    if not os.getenv("OPENAI_API_KEY"):
+    if not has_active_api_key():
         print("❌ ERROR: OPENAI_API_KEY not set!")
         print("   Please create a .env file with: OPENAI_API_KEY=your_key_here")
         return
@@ -140,9 +141,9 @@ def test_conversation_flow():
     conversation = []
     
     flow = [
-        "Tell me something cool about black holes.",
-        "Why do some planets have rings?",
-        "Give me one weird trivia fact about octopuses."
+        "Explain capacitance like I am studying for AP Physics 2.",
+        "Now connect that to RC circuits and time constant.",
+        "Give me one common mistake students make with RC graphs."
     ]
     
     for i, message in enumerate(flow, 1):

@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   prof-sage:
     build:
@@ -10,12 +8,27 @@ services:
       - "8000:8000"
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-5-nano}
+      - OPENAI_MAX_OUTPUT_TOKENS=${OPENAI_MAX_OUTPUT_TOKENS:-64}
+      - OPENAI_MAX_HISTORY_MESSAGES=${OPENAI_MAX_HISTORY_MESSAGES:-2}
+      - OPENAI_REASONING_EFFORT=${OPENAI_REASONING_EFFORT:-minimal}
+      - OPENAI_REQUEST_TIMEOUT_SECONDS=${OPENAI_REQUEST_TIMEOUT_SECONDS:-45}
+      - PUBLIC_API_KEY=${PUBLIC_API_KEY:-}
+      - API_RATE_LIMIT_PER_MINUTE=${API_RATE_LIMIT_PER_MINUTE:-30}
+      - API_RATE_LIMIT_BURST=${API_RATE_LIMIT_BURST:-10}
+      - API_MAX_CHAT_MESSAGE_CHARS=${API_MAX_CHAT_MESSAGE_CHARS:-4000}
+      - API_MAX_CONVERSATION_MESSAGES=${API_MAX_CONVERSATION_MESSAGES:-12}
+      - CORS_ORIGINS=${CORS_ORIGINS:-}
+      - TRUST_PROXY_HEADERS=${TRUST_PROXY_HEADERS:-false}
       - API_HOST=0.0.0.0
       - API_PORT=8000
       - ENVIRONMENT=${ENVIRONMENT:-development}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
       - ./src:/app/src
+      - ./README.md:/app/README.md:ro
+      - ./DEPLOYMENT.md:/app/DEPLOYMENT.md:ro
+      - ./main.py:/app/main.py:ro
       - ./logs:/app/logs
     restart: unless-stopped
     healthcheck:

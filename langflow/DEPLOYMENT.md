@@ -7,8 +7,9 @@
 # Navigate to project
 cd /Users/aa/Documents/coding/p3ai/langflow
 
-# Setup environment
-uv sync
+# Setup slim local environment with Langflow support
+uv venv .venv
+uv pip install -r requirements.txt
 uv run main.py setup-env
 # Edit .env with your OpenAI API key
 ```
@@ -39,17 +40,34 @@ uv run main.py api --reload
 # Visit http://localhost:8000/docs for API documentation
 ```
 
-### 5. Start Langflow UI
-```bash
-uv run langflow run
-```
-
-The `Assistant` starter flow is injected automatically at startup.
-
-
 ---
 
 ## Docker Deployment
+
+Docker uses the lean deployment image. It is the easiest way to run the API in
+a container, but it does not install Langflow.
+
+The Docker path is tuned for low token usage:
+- `OPENAI_MODEL=gpt-5-nano`
+- `OPENAI_MAX_OUTPUT_TOKENS=64`
+- `OPENAI_MAX_HISTORY_MESSAGES=2`
+- `OPENAI_REASONING_EFFORT=minimal`
+- `OPENAI_TEMPERATURE` is ignored for GPT-5 models because they only accept the default value
+- `OPENAI_REQUEST_TIMEOUT_SECONDS=45` for fail-fast request handling
+
+For an exposed-IP deployment, set a shared API key and rate limits:
+```bash
+PUBLIC_API_KEY=change-me
+API_RATE_LIMIT_PER_MINUTE=30
+API_RATE_LIMIT_BURST=10
+CORS_ORIGINS=https://your-frontend.example
+TRUST_PROXY_HEADERS=true
+```
+
+Then start the public container with:
+```bash
+OPENAI_API_KEY=... PUBLIC_API_KEY=... ./docker.sh public-up
+```
 
 ### Local Docker Testing
 ```bash
@@ -57,7 +75,7 @@ The `Assistant` starter flow is injected automatically at startup.
 docker build -t assistant .
 
 # Run the container
-docker run -e OPENAI_API_KEY=sk-xxx... -p 8000:8000 assistant
+docker run -e OPENAI_API_KEY=sk-xxx... -e PUBLIC_API_KEY=change-me -p 8000:8000 assistant
 
 # Test with docker-compose
 docker-compose up --build

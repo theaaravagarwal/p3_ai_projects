@@ -6,6 +6,7 @@ Use this to test the chatbot via the REST API
 
 import requests
 import json
+import os
 from typing import List, Dict
 
 class AssistantClient:
@@ -15,6 +16,13 @@ class AssistantClient:
         """Initialize the client with API base URL"""
         self.base_url = base_url
         self.conversation_history: List[Dict] = []
+        self.api_key = os.getenv("PUBLIC_API_KEY", "").strip()
+
+    def _headers(self) -> Dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["X-API-Key"] = self.api_key
+        return headers
     
     def get_info(self) -> Dict:
         """Get chatbot information"""
@@ -32,6 +40,7 @@ class AssistantClient:
             response = requests.post(
                 f"{self.base_url}/chat",
                 json=payload,
+                headers=self._headers(),
                 timeout=30
             )
             response.raise_for_status()
@@ -48,7 +57,7 @@ class AssistantClient:
     def reset(self):
         """Reset conversation history"""
         self.conversation_history = []
-        requests.post(f"{self.base_url}/reset")
+        requests.post(f"{self.base_url}/reset", headers=self._headers())
     
     def interactive_session(self):
         """Run an interactive chat session"""
