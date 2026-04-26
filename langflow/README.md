@@ -1,121 +1,119 @@
-# Assistant Chatbot
+# Langflow Local Clients
 
-Assistant is a simple OpenAI-powered chatbot with:
+This repo is a thin local frontend layer for a Langflow flow.
 
-- a terminal chat mode
-- a FastAPI server
-- a small browser UI
-- Docker deployment
-- prompt and config tests
+Use it when:
 
-## What it needs
+- Langflow is already running locally
+- your flow is already working in Langflow Playground
+- you want a separate frontend that calls the Langflow API
 
-- Python 3.11+
-- `uv`
-- an `OPENAI_API_KEY`
+## Architecture
+
+### Playground testing
+
+```text
+Browser
+  -> Langflow UI
+  -> Playground
+  -> Your flow
+```
+
+### Local frontend plus local Langflow backend
+
+```text
+Browser
+  -> Gradio or Streamlit
+  -> POST /api/v1/run/<FLOW_ID>
+  -> Langflow
+  -> Your flow
+  -> model / tools / memory
+```
+
+Key point:
+
+- Gradio or Streamlit is only the frontend
+- Langflow stores and runs the flow
+- Langflow exposes the API endpoint
 
 ## Setup
+
+1. Start Langflow locally and confirm your flow works in Playground.
+2. Copy the official API snippet from `Share -> API access` in Langflow.
+3. Create a Langflow API key in `Settings -> Langflow API Keys`.
+4. Copy `.env.example` to `.env` and fill in:
+   - `LANGFLOW_BASE_URL`
+   - `LANGFLOW_FLOW_ID`
+   - `LANGFLOW_API_KEY`
+   - the provider key your flow actually uses, such as `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`
+
+Install dependencies:
 
 ```bash
 uv venv .venv
 uv pip install -r requirements.txt
-uv run main.py setup-env
 ```
 
-Then edit `.env` and add your real `OPENAI_API_KEY`.
-
-## Run locally
-
-Show status:
+If you prefer `pip`:
 
 ```bash
-uv run main.py status
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-Run the chatbot in the terminal:
+## Test The Langflow API First
+
+Do not move to a frontend until the direct API call works.
 
 ```bash
-uv run main.py bot
+python test_langflow.py
 ```
 
-Start the API server:
+This sends `"Hello"` to your configured flow and prints the raw JSON plus the extracted reply text.
+
+## Run The Gradio Frontend
 
 ```bash
-uv run main.py api --reload
+python app.py
 ```
 
-Run tests:
+Default URL:
+
+- `http://localhost:7861`
+
+Request path:
+
+- browser -> Gradio -> Langflow API -> flow -> response -> Gradio -> browser
+
+## Run The Streamlit Frontend
 
 ```bash
-uv run main.py test
+streamlit run streamlit_app.py
 ```
 
-Launch the menu:
+Default URL:
 
-```bash
-uv run main.py
-```
+- `http://localhost:8501`
 
-## Configuration
+Request path:
 
-The main settings live in `.env`:
+- browser -> Streamlit -> Langflow API -> flow -> response -> Streamlit -> browser
 
-- `OPENAI_API_KEY`
-- `OPENAI_MODEL`
-- `OPENAI_MAX_OUTPUT_TOKENS`
-- `OPENAI_MAX_HISTORY_MESSAGES`
-- `OPENAI_TEMPERATURE`
-- `OPENAI_REQUEST_TIMEOUT_SECONDS`
+## Files
 
-## API
+- `langflow_client.py`: shared request and response parsing logic
+- `test_langflow.py`: direct API connectivity check
+- `app.py`: Gradio frontend
+- `streamlit_app.py`: Streamlit frontend
 
-The server exposes:
+## Troubleshooting
 
-- `GET /` for the browser UI
-- `POST /chat` for sending a message
-- `POST /reset` for clearing a conversation
+- `403 Forbidden`: the API key is missing, invalid, or not being sent in `x-api-key`
+- connection error: Langflow is not running at `LANGFLOW_BASE_URL`
+- provider credential error: set the matching provider key in `.env` such as `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. The client forwards these to Langflow as `X-LANGFLOW-GLOBAL-VAR-*` headers for each request.
+- unexpected response shape: inspect the raw output from `python test_langflow.py`
 
-Example request:
+If you need to override a component at request time, set `LANGFLOW_TWEAKS_JSON` to a valid Langflow `tweaks` object.
 
-```bash
-curl -X POST http://localhost:8000/chat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "Hello, can you help me?",
-    "conversation_history": []
-  }'
-```
-
-## Docker
-
-Start with Docker Compose:
-
-```bash
-docker-compose up --build
-```
-
-Or use the helper script:
-
-```bash
-./docker.sh up
-```
-
-To stop:
-
-```bash
-./docker.sh down
-```
-
-## Project layout
-
-- `main.py` - launcher and CLI entry point
-- `src/api.py` - FastAPI app and browser UI
-- `src/bot.py` - terminal chat loop
-- `src/openai_config.py` - model and API config helpers
-- `src/system_prompt.py` - chatbot behavior prompt
-- `src/security.py` - API key and rate limit checks
-- `tests/` - prompt and config tests
-
-## Notes
-
-- The app uses the current conversation history plus the system prompt.
+If your flow returns a slightly different JSON shape, update `extract_text()` in `langflow_client.py`.

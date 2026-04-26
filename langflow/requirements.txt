@@ -1,10 +1,5 @@
-# Local development environment
-# Use this with uv for the slim Langflow-backed setup.
-
-langflow-base[openai]
-openai
+# Local Langflow frontend clients
+gradio
 python-dotenv
 requests
-fastapi
-uvicorn
-pydantic
+streamlit

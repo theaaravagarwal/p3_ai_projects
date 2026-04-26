@@ -1,10 +1,12 @@
 [project]
-name = "assistant-bot"
+name = "langflow-local-clients"
 version = "0.1.0"
-description = "AI-powered general-purpose chatbot built with OpenAI"
+description = "Thin Gradio and Streamlit frontends for a local Langflow flow"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "openai>=1.109.1",
+    "gradio>=5.49.1",
     "python-dotenv>=1.2.2",
+    "requests>=2.32.5",
+    "streamlit>=1.50.0",
 ]

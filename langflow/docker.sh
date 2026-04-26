@@ -15,11 +15,14 @@ fi
 
 detect_host_ip() {
   if command -v ipconfig >/dev/null 2>&1; then
-    ifconfig_ip="$(ipconfig getifaddr en0 2>/dev/null || true)"
-    if [[ -n "$ifconfig_ip" ]]; then
-      printf '%s' "$ifconfig_ip"
-      return
-    fi
+    local iface ip
+    for iface in en0 en1 en2; do
+      ip="$(ipconfig getifaddr "$iface" 2>/dev/null || true)"
+      if [[ -n "$ip" ]]; then
+        printf '%s' "$ip"
+        return
+      fi
+    done
   fi
 
   if command -v hostname >/dev/null 2>&1; then
@@ -89,13 +92,15 @@ case "$cmd" in
     docker rm -f assistant-public >/dev/null 2>&1 || true
     docker run -d \
       --name assistant-public \
-      -p "${HOST_PORT:-8000}:8000" \
+      -p "0.0.0.0:${HOST_PORT:-8000}:8000" \
       -e OPENAI_API_KEY="${OPENAI_API_KEY}" \
       -e OPENAI_MODEL="${OPENAI_MODEL:-gpt-5-nano}" \
       -e OPENAI_MAX_OUTPUT_TOKENS="${OPENAI_MAX_OUTPUT_TOKENS:-64}" \
       -e OPENAI_MAX_HISTORY_MESSAGES="${OPENAI_MAX_HISTORY_MESSAGES:-2}" \
       -e OPENAI_REASONING_EFFORT="${OPENAI_REASONING_EFFORT:-minimal}" \
       -e OPENAI_REQUEST_TIMEOUT_SECONDS="${OPENAI_REQUEST_TIMEOUT_SECONDS:-45}" \
+      -e API_HOST=0.0.0.0 \
+      -e API_PORT=8000 \
       -e PUBLIC_API_KEY="${PUBLIC_API_KEY:-}" \
       -e API_RATE_LIMIT_PER_MINUTE="${API_RATE_LIMIT_PER_MINUTE:-30}" \
       -e API_RATE_LIMIT_BURST="${API_RATE_LIMIT_BURST:-10}" \
