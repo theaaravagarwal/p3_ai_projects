@@ -151,38 +151,86 @@ def call_langflow(user_message: str, timeout_seconds: int = 60) -> dict[str, Any
         ) from exc
 
 
-def extract_text(data: Any) -> str:
-    if not isinstance(data, dict):
-        return str(data)
+TEXT_KEYS = (
+    "text",
+    "message",
+    "content",
+    "response",
+    "answer",
+    "output",
+    "result",
+)
 
-    direct_message = data.get("message")
-    if isinstance(direct_message, dict):
-        text = direct_message.get("text")
-        if isinstance(text, str) and text.strip():
+CONTAINER_KEYS = (
+    "outputs",
+    "results",
+    "artifacts",
+    "data",
+    "generations",
+    "messages",
+)
+
+
+def _extract_from_string(value: str) -> str:
+    text = value.strip()
+    if not text:
+        return ""
+
+    if text[0] in "[{":
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
             return text
-    if isinstance(direct_message, str) and direct_message.strip():
-        return direct_message
 
-    outputs = data.get("outputs")
-    if isinstance(outputs, list):
-        for output in outputs:
-            text = extract_text(output)
+        extracted = _find_text(parsed, allow_plain_string=False)
+        if extracted:
+            return extracted
+
+    return text
+
+
+def _find_text(data: Any, *, allow_plain_string: bool) -> str:
+    if isinstance(data, str):
+        if allow_plain_string:
+            return _extract_from_string(data)
+        return ""
+
+    if isinstance(data, list):
+        for item in data:
+            text = _find_text(item, allow_plain_string=False)
             if text:
                 return text
+        return ""
 
-    if isinstance(outputs, dict):
-        text = extract_text(outputs)
+    if not isinstance(data, dict):
+        return ""
+
+    for key in TEXT_KEYS:
+        if key not in data:
+            continue
+
+        value = data[key]
+        text = _find_text(value, allow_plain_string=True)
         if text:
             return text
 
-    results = data.get("results")
-    if isinstance(results, dict):
-        text = extract_text(results)
+    for key in CONTAINER_KEYS:
+        if key not in data:
+            continue
+
+        text = _find_text(data[key], allow_plain_string=False)
         if text:
             return text
 
-    text = data.get("text")
-    if isinstance(text, str) and text.strip():
+    return ""
+
+
+def extract_text(data: Any) -> str:
+    text = _find_text(data, allow_plain_string=True)
+    if text:
         return text
+
+    if isinstance(data, (dict, list)):
+        return json.dumps(data, indent=2)
 
     return str(data)
