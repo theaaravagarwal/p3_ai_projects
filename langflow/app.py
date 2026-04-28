@@ -27,5 +27,6 @@ demo = gr.Interface(
 
 
 if __name__ == "__main__":
-    port = int(os.getenv("GRADIO_SERVER_PORT", "7861"))
-    demo.launch(server_port=port)
+    port = int(os.getenv("PORT", os.getenv("GRADIO_SERVER_PORT", "7861")))
+    server_name = os.getenv("GRADIO_SERVER_NAME", "0.0.0.0")
+    demo.launch(server_name=server_name, server_port=port)

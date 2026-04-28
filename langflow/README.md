@@ -1,3 +1,10 @@
+---
+title: Langflow Chatbot
+sdk: gradio
+app_file: app.py
+python_version: 3.11
+---
+
 # Langflow Local Clients
 
 This repo is a thin local frontend layer for a Langflow flow.
@@ -85,6 +92,27 @@ Default URL:
 Request path:
 
 - browser -> Gradio -> Langflow API -> flow -> response -> Gradio -> browser
+
+## Deploy On Hugging Face Spaces
+
+Use the Gradio Space path for this repo. Hugging Face reads the YAML block at
+the top of this README and starts `app.py`.
+
+Important: the Space cannot call `http://localhost:7860` on your laptop.
+Set `LANGFLOW_BASE_URL` to a public Langflow backend URL, such as Langflow
+Cloud or Langflow running on a VPS, Railway, Render, Fly.io, etc.
+
+In your Hugging Face Space, add these as Settings -> Variables or Secrets:
+
+- Variable: `LANGFLOW_BASE_URL`
+- Variable: `LANGFLOW_FLOW_ID`
+- Secret: `LANGFLOW_API_KEY`
+- Secret: the provider key used by your flow, such as `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`
+- Optional variable: `LANGFLOW_INPUT_TYPE`
+- Optional variable: `LANGFLOW_OUTPUT_TYPE`
+- Optional secret: `LANGFLOW_TWEAKS_JSON`
+
+See `HUGGINGFACE.md` for the full deploy checklist.
 
 ## Run The Streamlit Frontend
 
