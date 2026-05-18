@@ -1,0 +1,2 @@
+"""Chess evaluation CNN package."""
+
