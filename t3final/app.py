@@ -309,801 +309,746 @@ HTML = r"""
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Chess Evaluation AI Dashboard</title>
+  <title>Chess Evaluation — Minimal View</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
       theme: {
         extend: {
-          colors: {
-            bg: "#030712",
-            panel: "#0B0F19",
-            glass: "rgba(17,24,39,0.7)",
-            emerald: "#10B981",
-            indigo: "#6366F1",
-            silver: "#9CA3AF"
-          },
           fontFamily: {
-            sans: ["Inter","ui-sans-serif","system-ui","sans-serif"],
-            mono: ["JetBrains Mono","ui-monospace","SFMono-Regular","Consolas","monospace"]
-          },
-          boxShadow: {
-            glass: "0 26px 70px -45px rgba(15,23,42,.9), inset 0 1px 0 rgba(255,255,255,.04)",
-            glow: "0 0 0 1px rgba(16,185,129,.28), 0 0 26px rgba(16,185,129,.16)"
+            sans: ["Inter", "SF Pro", "system-ui", "sans-serif"]
           }
         }
       }
     };
   </script>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap" rel="stylesheet" />
   <style>
     :root {
-      --line: rgba(255, 255, 255, 0.06);
-      --muted: #9ca3af;
-      --bg-a: #030712;
-      --bg-b: #0B0F19;
+      --bg: #000000;
+      --wire: rgba(255, 255, 255, 0.1);
+      --ink: #ffffff;
+      --muted: rgba(255, 255, 255, 0.5);
+      --charcoal: #111111;
     }
-    html, body {
-      background: radial-gradient(circle at 12% 8%, #111827 0%, #0B0F19 38%, #060A14 75%, #030712 100%);
-      min-height: 100%;
+    * {
+      box-sizing: border-box;
+    }
+    html,
+    body {
       margin: 0;
-      color: #e5e7eb;
-      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      min-height: 100%;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Inter, sans-serif;
+      transition: all 0.3s ease-in-out;
+      animation: breathe 10s ease-in-out infinite alternate;
     }
-    .sheet {
-      background: linear-gradient(170deg, rgba(17,24,39,0.78), rgba(15,23,42,0.78));
-      border: 1px solid var(--line);
-      box-shadow: 0 26px 70px -45px rgba(15,23,42,.9), inset 0 1px 0 rgba(255,255,255,.04);
-      backdrop-filter: blur(12px);
+    @keyframes breathe {
+      from { background: #000000; }
+      to { background: #060606; }
     }
-    .chip {
-      transition: all .25s ease;
-      border: 1px solid rgba(255,255,255,0.15);
-      background: rgba(15,23,42,.55);
+    .shell {
+      width: min(1400px, 100%);
+      margin: 0 auto;
+      padding: 2rem 1.05rem 8rem;
     }
-    .chip:hover {
-      transform: translateY(-1px);
-      border-color: rgba(16,185,129,.8);
-      color: #6ee7b7;
+    .headline {
+      max-width: 980px;
+      margin: 0 auto 1rem;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 0.75rem;
     }
-    .chip.active {
-      border-color: rgba(16,185,129,0.95);
-      color: #6ee7b7;
-      background: rgba(16,185,129,0.1);
-      box-shadow: 0 0 0 1px rgba(16,185,129,.28), 0 0 22px rgba(16,185,129,.2);
+    .headline h1 {
+      margin: 0;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      font-size: clamp(2rem, 4vw, 3rem);
+      line-height: 1.05;
     }
-    .icon-btn {
-      width: 2.55rem;
-      height: 2.55rem;
-      border-radius: 0.8rem;
+    .headline p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.86rem;
+      letter-spacing: 0.01em;
+    }
+    .panel {
+      border: 1px solid var(--wire);
+      border-radius: 1.2rem;
+      padding: 1rem;
+      transition: all 0.3s ease-in-out;
+    }
+    .workspace {
+      margin-top: 1.1rem;
+      display: grid;
+      gap: 1rem;
+      grid-template-columns: 1.25fr 1.35fr 0.95fr;
+      align-items: start;
+    }
+    @media (max-width: 1100px) {
+      .workspace {
+        grid-template-columns: 1fr;
+      }
+    }
+    .board-wrap {
+      display: grid;
+      place-items: center;
+      min-height: 26rem;
+    }
+    .chess-board {
+      width: min(540px, 100%);
+      aspect-ratio: 1 / 1;
+    }
+    .chess-grid {
+      width: 100%;
+      height: 100%;
+      display: grid;
+      grid-template-columns: repeat(8, minmax(0, 1fr));
+      grid-template-rows: repeat(8, minmax(0, 1fr));
+      overflow: hidden;
+      border: 1px solid var(--wire);
+    }
+    .square {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      user-select: none;
+      font-size: clamp(1.4rem, 4vw, 2.65rem);
+      line-height: 1;
+      letter-spacing: 0;
+      font-weight: 500;
+      transition: transform 0.2s ease-in-out;
+    }
+    .light-square {
+      background: #ffffff;
+      color: #111111;
+    }
+    .dark-square {
+      background: #111111;
+      color: #f8f8f8;
+    }
+    .piece.white {
+      color: #ffffff;
+      text-shadow: 0 2px 0 rgba(18, 18, 18, 0.4);
+    }
+    .piece.black {
+      color: #111111;
+      text-shadow: 0 0 5px rgba(255, 255, 255, 0.5);
+    }
+    .board-meta {
+      margin-top: 0.8rem;
+      display: flex;
+      justify-content: space-between;
+      color: var(--muted);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .dot-row {
+      margin-top: 0.7rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    .dot-row button {
+      appearance: none;
+      border: 1px solid var(--wire);
+      background: transparent;
+      color: var(--ink);
+      width: 2.05rem;
+      height: 2.05rem;
+      border-radius: 9999px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      border: 1px solid rgba(148,163,184,.28);
-      background: rgba(15,23,42,.6);
-      transition: all .2s ease;
-    }
-    .icon-btn svg {
-      width: 1rem;
-      height: 1rem;
-    }
-    .icon-btn:hover {
-      border-color: rgba(16,185,129,.7);
-      box-shadow: 0 0 0 1px rgba(16,185,129,.2);
-    }
-    #boardWrap {
-      position: relative;
-      border-radius: 1rem;
-      padding: 0.75rem;
-      background: rgba(2,6,23,.45);
-      border: 1px solid rgba(148,163,184,.16);
-      box-shadow: 0 24px 58px -32px rgba(2,6,23,.85);
-    }
-    #board {
-      width: min(100%, 540px);
-      margin: 0 auto;
-      filter: drop-shadow(0 18px 28px rgba(2, 6, 23, .7));
-    }
-    .chessboard-board {
-      border-radius: 0.6rem;
-      overflow: hidden;
-      border: 1px solid rgba(255,255,255,.08);
-    }
-    .board-sheen::after {
-      content: "";
-      pointer-events: none;
-      position: absolute;
-      inset: 0.85rem;
-      border-radius: 0.6rem;
-      box-shadow: inset 0 0 34px rgba(0,0,0,.28), inset 0 0 0 1px rgba(255,255,255,.04);
-    }
-    .eval-card {
-      position: relative;
-      overflow: hidden;
-      border: 1px solid var(--line);
-      transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease;
-    }
-    .eval-card:hover {
-      transform: translateY(-1px);
-      border-color: rgba(255,255,255,.14);
-    }
-    .eval-card::before {
-      content: "";
-      position: absolute;
-      inset: 0;
-      pointer-events: none;
-      background: linear-gradient(125deg, rgba(255,255,255,0.02), rgba(255,255,255,0), rgba(255,255,255,0));
-    }
-    .eval-card.loading {
-      animation: shimmer 1.1s linear infinite;
-      border-color: rgba(16,185,129,.36);
-      box-shadow: 0 0 0 1px rgba(16,185,129,.27), 0 0 30px rgba(16,185,129,.2);
-    }
-    .loading::before {
-      content: "";
-      position: absolute;
-      inset: -1px;
-      background: linear-gradient(100deg, transparent, rgba(16,185,129,.18), transparent);
-      animation: shimmer-sweep 1.2s linear infinite;
-      transform: translateX(-100%);
-      z-index: 0;
-    }
-    @keyframes shimmer {
-      0%,100% { filter: saturate(1); }
-      50% { filter: saturate(1.15); }
-    }
-    @keyframes shimmer-sweep {
-      0% { transform: translateX(-120%); }
-      100% { transform: translateX(120%); }
-    }
-    .badge {
-      border-radius: 999px;
-      border: 1px solid;
-      padding: 0.2rem 0.7rem;
       font-size: 0.75rem;
-      font-weight: 600;
-      letter-spacing: 0.01em;
-      line-height: 1.4;
-      display: inline-flex;
-      align-items: center;
-      gap: 0.35rem;
-      position: relative;
-      z-index: 1;
+      transition: all 0.3s ease-in-out;
     }
-    .badge.white {
-      color: #6ee7b7;
-      border-color: rgba(16,185,129,.45);
-      background: rgba(16,185,129,.11);
-      box-shadow: 0 0 0 1px rgba(16,185,129,.24);
+    .dot-row button.active,
+    .dot-row button:hover {
+      color: #000000;
+      background: #ffffff;
+      border-color: #ffffff;
+      box-shadow: 0 0 0 1px rgba(255,255,255,0.2) inset;
     }
-    .badge.black {
-      color: #a5b4fc;
-      border-color: rgba(99,102,241,.45);
-      background: rgba(99,102,241,.12);
-      box-shadow: 0 0 0 1px rgba(99,102,241,.24);
+    .comparison-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.8rem;
+      margin-bottom: 0.9rem;
     }
-    .badge.equal {
-      color: #d1d5db;
-      border-color: rgba(148,163,184,.45);
-      background: rgba(148,163,184,.14);
-      box-shadow: 0 0 0 1px rgba(148,163,184,.24);
-    }
-    .vertical-gauge {
-      width: 1.15rem;
-      border-radius: 999px;
-      min-height: 16rem;
-      position: relative;
-      border: 1px solid rgba(148,163,184,.18);
-      background: linear-gradient(180deg, rgba(30,41,59,.78), rgba(15,23,42,.78));
-      overflow: hidden;
-    }
-    .vertical-gauge::before {
-      content: "";
-      position: absolute;
-      left: 48%;
-      top: 0.5rem;
-      bottom: 0.5rem;
-      width: 0.35rem;
+    .model-card {
+      border: 1px solid var(--wire);
       border-radius: 1rem;
-      background: linear-gradient(180deg, #10B981, rgba(16,185,129,.16), #6366F1);
-+    }
-    .vertical-gauge::after {
-      content: "";
-      position: absolute;
-      left: calc(50% - 2px);
-      top: 46%;
-      width: 0.55rem;
-      height: 0.55rem;
-      border-radius: 999px;
-      background: rgba(156,163,175,.6);
-      border: 1px solid rgba(255,255,255,.4);
+      padding: 0.95rem;
+      min-height: 13.8rem;
+      transition: all 0.3s ease-in-out;
     }
-    .gauge-fill {
-      position: absolute;
-      inset: 0.38rem;
-      border-radius: 1rem;
-      overflow: hidden;
+    .model-title {
+      font-size: 0.72rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
     }
-    .gauge-fill::before {
-      content: "";
-      position: absolute;
-      inset: -8px 0;
-      background: linear-gradient(180deg, rgba(99,102,241,.9), rgba(16,185,129,.75), rgba(6,182,212,.3));
-      transition: all .6s cubic-bezier(0.25, 1, 0.5, 1);
-      will-change: transform;
-      border-radius: 1rem;
-      box-shadow: 0 0 34px rgba(16,185,129,.3);
+    .model-value {
+      margin-top: 0.45rem;
+      font-size: clamp(2.3rem, 4vw, 3.4rem);
+      line-height: 1;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      transition: color 0.3s ease-in-out;
+      white-space: nowrap;
     }
-    .gauge-marker {
-      position: absolute;
-      left: 50%;
-      width: 1.65rem;
-      height: 1.65rem;
-      border-radius: 999px;
-      transform: translateX(-50%);
-      border: 1px solid rgba(15,23,42,.85);
-      background: radial-gradient(circle at 35% 30%, #f8fafc, #10B981);
-      box-shadow: 0 0 24px rgba(16,185,129,.45);
-      transition: all .6s cubic-bezier(0.25, 1, 0.5, 1);
-      will-change: top;
+    .sub-tag {
+      margin-top: 0.2rem;
+      color: var(--muted);
+      font-size: 0.75rem;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
     }
-    .sparkline-wrap {
-      height: 45px;
-      margin-top: 0.35rem;
+    .sparkline {
+      margin-top: 0.7rem;
+      height: 56px;
+      border-top: 1px solid var(--wire);
+      padding-top: 0.5rem;
     }
-    .sparkline-wrap svg {
+    .sparkline svg {
       width: 100%;
       height: 100%;
+      overflow: visible;
     }
-    .sparkline-path {
+    .sparkline path {
       fill: none;
-      stroke-width: 1.6;
+      stroke-width: 2;
       stroke-linecap: round;
       stroke-linejoin: round;
-      transition: d .6s cubic-bezier(0.25, 1, 0.5, 1);
     }
-    .spec-panel {
-      max-height: 0;
-      opacity: 0;
-      overflow: hidden;
-      transition: max-height .35s cubic-bezier(0.16,1,0.3,1), opacity .25s ease;
+    .master-block {
+      display: grid;
+      gap: 0.85rem;
+      align-content: start;
     }
-    .spec-open .spec-panel {
-      max-height: 120px;
-      opacity: 1;
-      margin-top: 0.55rem;
+    .master-caption {
+      font-size: 0.72rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
     }
-    details {
-      border-top: 1px solid rgba(148,163,184,.18);
-      margin-top: 0.65rem;
-      padding-top: 0.55rem;
-    }
-    summary {
-      list-style: none;
-      cursor: pointer;
-      color: #86efac;
-      font-size: .75rem;
-    }
-    summary::-webkit-details-marker { display:none; }
-    .mono {
-      font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
-    }
-    .diag-dot {
-      width: 0.5rem;
-      height: 0.5rem;
+    .master-bar {
+      position: relative;
+      height: 1.15rem;
+      border: 1px solid var(--wire);
       border-radius: 999px;
-      background: #10B981;
-      box-shadow: 0 0 0 4px rgba(16,185,129,.18);
+      overflow: hidden;
+      background: #050505;
     }
-    .diag-dot.off {
-      background: #ef4444;
-      box-shadow: 0 0 0 4px rgba(239,68,68,.16);
-    }
-    .floating-tip {
+    .master-fill {
       position: absolute;
-      inset: auto 1rem 1rem auto;
-      background: rgba(15,23,42,.7);
-      border: 1px solid rgba(148,163,184,.22);
-      border-radius: .8rem;
-      padding: .45rem .6rem;
-      font-size: .7rem;
-      color: #cbd5e1;
-      backdrop-filter: blur(8px);
+      top: 0;
+      bottom: 0;
+      border-radius: 999px;
+      transition: all 0.3s ease-in-out;
+      transform-origin: center;
+      box-shadow: 0 0 22px rgba(255, 255, 255, 0.15);
     }
-    @media (max-width: 1024px) {
-      .dash-shell {
-        grid-template-columns: 1fr !important;
+    .master-value {
+      font-size: clamp(2rem, 4vw, 3rem);
+      line-height: 1;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+    }
+    .adv-ring {
+      width: 14rem;
+      aspect-ratio: 1;
+      margin: 0.4rem auto 0;
+      border-radius: 9999px;
+      display: grid;
+      place-items: center;
+      border: 2px solid;
+      transition: all 0.3s ease-in-out;
+    }
+    .adv-ring span {
+      width: 0.8rem;
+      aspect-ratio: 1;
+      border-radius: 9999px;
+      background: currentColor;
+      opacity: 0.86;
+      transition: all 0.3s ease-in-out;
+    }
+    .adv-ring.white {
+      color: #ffffff;
+      background: rgba(255, 255, 255, 0.18);
+      box-shadow: 0 0 40px rgba(255, 255, 255, 0.45);
+    }
+    .adv-ring.black {
+      color: #2f2f2f;
+      background: rgba(255, 255, 255, 0.03);
+      border-color: #2a2a2a;
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.11), 0 0 28px rgba(255, 255, 255, 0.16), inset 0 0 24px rgba(255, 255, 255, 0.08);
+      animation: pulseBlack 2.4s ease-in-out infinite;
+    }
+    .adv-ring.equal {
+      color: #666666;
+      background: rgba(255, 255, 255, 0.06);
+      border-color: #666666;
+    }
+    @keyframes pulseBlack {
+      0%, 100% {
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.11), 0 0 22px rgba(255, 255, 255, 0.2), inset 0 0 22px rgba(255, 255, 255, 0.08);
       }
-      .mobile-stack {
-        display: flex;
-        flex-direction: column;
+      50% {
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18), 0 0 34px rgba(255, 255, 255, 0.35), inset 0 0 30px rgba(255, 255, 255, 0.12);
       }
-      .mobile-stack > *:first-child {
-        order: 1;
-      }
-      .mobile-stack > *:nth-child(2) {
-        order: 2;
-      }
+    }
+    .ring-text {
+      text-align: center;
+      margin-top: 0.4rem;
+      font-size: 0.72rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .fen-shell {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 1rem;
+      z-index: 20;
+      display: flex;
+      justify-content: center;
+      pointer-events: none;
+    }
+    .fen-row {
+      width: min(90vw, 48rem);
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      pointer-events: auto;
+    }
+    #fenInput {
+      width: 13rem;
+      max-width: 100%;
+      background: transparent;
+      color: #ffffff;
+      border: none;
+      border-bottom: 1px solid var(--wire);
+      padding: 0.7rem 0.1rem;
+      outline: none;
+      font-size: 0.96rem;
+      font-family: inherit;
+      transition: width 0.3s ease-in-out, border-color 0.3s ease-in-out;
+    }
+    #fenInput:focus {
+      width: 100%;
+      border-color: #ffffff;
+    }
+    #evalBtn {
+      border: 1px solid var(--wire);
+      border-radius: 999px;
+      background: transparent;
+      color: #ffffff;
+      padding: 0.52rem 0.88rem;
+      font-size: 0.74rem;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      opacity: 0.35;
+      pointer-events: none;
+      transition: all 0.3s ease-in-out;
+    }
+    .fen-row:focus-within #evalBtn {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    #status {
+      color: rgba(255,255,255,0.5);
+      font-size: 0.72rem;
+      margin-top: 0.65rem;
+      min-height: 0.95rem;
+    }
+    #status.error {
+      color: #ff8a80;
     }
   </style>
 </head>
-<body class="min-h-screen text-slate-200">
-  <main class="mx-auto w-full max-w-7xl px-4 py-5 sm:px-6 lg:px-8">
-    <header class="relative rounded-2xl sheet p-4 md:p-5 mb-4">
-      <div class="floating-tip">Static Evaluator v1.0 • No Search Tree</div>
-      <div class="mb-3 flex flex-wrap items-start justify-between gap-3">
-        <div class="space-y-1.5">
-          <p class="text-[11px] uppercase tracking-[0.22em] text-cyan-300 font-semibold">Chess Evaluation AI Dashboard</p>
-          <h1 class="text-2xl md:text-3xl font-semibold tracking-tight">Chess Position Intelligence Console</h1>
-          <p class="text-sm text-slate-400 max-w-2xl leading-6">Compare a custom-trained ResNet34 CNN versus Stockfish on static position evaluation. Built as a premium analytics workflow.</p>
-        </div>
-        <div class="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs sheet border border-slate-500/20">
-          CNN • MAE 125.22 cp • Bucket Accuracy 89.01% (Clean 95.12%)
-        </div>
-      </div>
-      <div class="text-xs text-slate-400">Current model: <span class="mono text-slate-200">models/best_model.pt</span></div>
+<body>
+  <div class="shell">
+    <header class="headline">
+      <h1>Chess Evaluation Space</h1>
+      <p>Minimal, visual, immediate</p>
     </header>
 
-    <section class="dash-shell mobile-stack grid gap-4 lg:grid-cols-[1.25fr,1fr]">
-      <section class="sheet rounded-2xl p-4 md:p-5 space-y-4">
-        <div class="flex items-center justify-between">
-          <h2 class="text-lg font-semibold tracking-wide">Board Zone</h2>
-          <div class="text-xs text-slate-400">Interactive drag & drop</div>
+    <section class="workspace">
+      <section class="panel board-panel">
+        <div class="board-wrap">
+          <div id="board" class="chess-board" aria-label="Chess board"></div>
         </div>
-        <div id="boardWrap" class="board-sheen">
-          <div id="board"></div>
+        <div class="board-meta">
+          <span id="turnBadge">Turn · White</span>
+          <span id="stateBadge">Live</span>
         </div>
-        <p class="mono text-[11px] text-slate-400 break-all" id="currentFen"></p>
-
-        <div class="space-y-3">
-          <label class="block text-[11px] uppercase tracking-[0.2em] text-slate-300">FEN command bar</label>
-          <div class="flex items-stretch gap-2">
-            <div class="relative flex-1">
-              <textarea id="fenInput" rows="2" class="w-full mono text-sm rounded-xl sheet border border-slate-500/20 p-3 pr-24 resize-none focus:outline-none focus:border-emerald-400/60 focus:shadow-[0_0_0_2px_rgba(16,185,129,0.22)]"></textarea>
-              <div class="absolute right-2 top-2 flex gap-2">
-                <button id="copyFenBtn" class="icon-btn" title="Copy FEN" aria-label="Copy FEN">
-                  <svg viewBox="0 0 24 24" fill="none"><path d="M8 9h8v8H8V9Z" stroke="currentColor" stroke-width="1.6"/><path d="M12 4v2M12 18v2M6 7H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h2m10-14h1a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
-                </button>
-                <button id="pasteFenBtn" class="icon-btn" title="Paste FEN" aria-label="Paste FEN">
-                  <svg viewBox="0 0 24 24" fill="none"><path d="M9 4h6a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="1.6"/><path d="M7 8h10M7 11h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M11 15h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-                </button>
-              </div>
-            </div>
-            <button id="loadFenBtn" class="whitespace-nowrap rounded-xl px-4 text-sm font-semibold tracking-wide bg-emerald-500 text-slate-950 hover:bg-emerald-400 transition">Evaluate</button>
-          </div>
-          <div class="space-y-2">
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <span class="text-[11px] uppercase tracking-[0.2em] text-slate-300">Example positions</span>
-              <div class="flex items-center gap-2 text-xs text-slate-400">
-                <span>Depth</span>
-                <input id="depthInput" type="number" min="6" max="20" value="14" class="w-20 rounded-lg border border-slate-500/25 sheet p-1.5 text-sm focus:outline-none focus:border-emerald-400/60" />
-              </div>
-            </div>
-            <div id="exampleButtons" class="flex flex-wrap gap-2"></div>
-          </div>
-          <div class="flex flex-wrap items-center gap-2">
-            <button id="resetBtn" class="rounded-xl border border-slate-500/20 px-4 py-2 text-sm hover:border-emerald-300/70">Reset</button>
-            <button id="flipBtn" class="rounded-xl border border-slate-500/20 px-4 py-2 text-sm hover:border-indigo-300/70">Flip board</button>
-          </div>
-          <div id="errorBox" class="text-sm rounded-xl bg-red-500/10 border border-red-400/40 text-red-200 p-3 hidden"></div>
-        </div>
+        <div id="exampleDots" class="dot-row"></div>
+        <div id="status">Type or pick a position below</div>
       </section>
 
-      <section class="space-y-4" id="analyticsPanel">
-        <section class="sheet rounded-2xl p-4 md:p-5">
-          <h2 class="text-lg font-semibold tracking-wide mb-3">Evaluation Analytics</h2>
-          <div class="grid grid-cols-2 gap-2 text-sm">
-            <div class="sheet rounded-lg p-3 border border-slate-500/20">
-              <p class="text-[11px] uppercase tracking-[0.2em] text-slate-400">Turn</p>
-              <p class="mt-1 text-lg font-semibold" id="turnValue">White</p>
-            </div>
-            <div class="sheet rounded-lg p-3 border border-slate-500/20">
-              <p class="text-[11px] uppercase tracking-[0.2em] text-slate-400">Check</p>
-              <p class="mt-1 text-lg font-semibold" id="checkValue">No</p>
-            </div>
-            <div class="sheet rounded-lg p-3 border border-slate-500/20">
-              <p class="text-[11px] uppercase tracking-[0.2em] text-slate-400">State</p>
-              <p class="mt-1 text-lg font-semibold" id="statusValue">Live</p>
-            </div>
-            <div class="sheet rounded-lg p-3 border border-slate-500/20">
-              <p class="text-[11px] uppercase tracking-[0.2em] text-slate-400">Move</p>
-              <p class="mt-1 text-lg font-semibold" id="moveValue">White</p>
-            </div>
-          </div>
+      <section class="panel compare-panel">
+        <div class="comparison-grid">
+          <article class="model-card">
+            <div class="model-title">AI Intuition</div>
+            <div id="cnnValue" class="model-value">—</div>
+            <div class="sub-tag">CNN</div>
+            <div id="cnnSpark" class="sparkline" aria-hidden="true"></div>
+          </article>
+          <article class="model-card">
+            <div class="model-title">Calculated Truth</div>
+            <div id="sfValue" class="model-value">—</div>
+            <div class="sub-tag">Stockfish</div>
+            <div id="sfSpark" class="sparkline" aria-hidden="true"></div>
+          </article>
+        </div>
+        <div id="statusLine" class="board-meta" style="margin:0; text-transform:none; letter-spacing:0.02em;">Comparing two minds, frame by frame.</div>
+      </section>
 
-          <div class="mt-4 flex items-stretch gap-3">
-            <div class="flex-1">
-              <p class="mb-2 text-xs uppercase tracking-[0.2em] text-slate-300">Live Eval (vertical gauge)</p>
-              <div class="vertical-gauge">
-                <div class="gauge-fill"><span id="gaugeFill"></span></div>
-                <div id="gaugeMarker" class="gauge-marker"></div>
-              </div>
-            </div>
-            <div class="flex-1">
-              <p class="text-xs uppercase tracking-[0.2em] text-slate-300">Quick readout</p>
-              <div class="mt-2 space-y-1 text-sm text-slate-300">
-                <p>White zone: <span class="text-emerald-300">+</span> advantage</p>
-                <p>Balanced zone: near center</p>
-                <p>Black zone: <span class="text-indigo-300">-</span> advantage</p>
-              </div>
-            </div>
+      <section class="panel">
+        <div class="master-block">
+          <div class="master-caption">Master Eval Bar</div>
+          <div class="master-bar">
+            <div id="masterFill" class="master-fill"></div>
           </div>
-
-          <div id="evalGrid" class="space-y-3 mt-3"></div>
-        </section>
-
-        <section class="sheet rounded-2xl p-3 md:p-4 border border-slate-500/20">
-          <div class="grid gap-2 text-xs mono text-slate-300">
-            <div class="flex items-center gap-2"><span id="statusDot" class="diag-dot animate-pulse"></span><span id="diagStatusLine">Backend Status: Online (Flask API)</span></div>
-            <div class="flex items-center gap-2"><span id="sfDot" class="diag-dot animate-pulse"></span><span id="diagBinaryLine">Stockfish: Connected</span></div>
-            <div class="flex items-center gap-2"><span id="nnueDot" class="diag-dot animate-pulse"></span><span id="diagNnueLine">NNUE: Active</span></div>
-          </div>
-        </section>
+          <div id="masterValue" class="master-value">—</div>
+          <div id="advRing" class="adv-ring equal"><span></span></div>
+          <div id="ringLabel" class="ring-text">Equal</div>
+        </div>
       </section>
     </section>
-  </main>
+  </div>
 
-  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
+  <div class="fen-shell">
+    <div class="fen-row">
+      <input id="fenInput" type="text" spellcheck="false" autocomplete="off" />
+      <button id="evalBtn" type="button">Evaluate</button>
+    </div>
+  </div>
+
   <script>
     const START_FEN = {{ start_fen|tojson }};
     const EXAMPLES = {{ examples|tojson }};
-    const MAX_SPARK = 10;
-    let game = new Chess(START_FEN);
-    let board = null;
-    let requestId = 0;
-    const sparkHistories = { CNN: [], Stockfish: [] };
+    const MAX_SPARK = 8;
+    const boardEl = document.getElementById("board");
+    const fenInput = document.getElementById("fenInput");
+    const turnBadge = document.getElementById("turnBadge");
+    const stateBadge = document.getElementById("stateBadge");
+    const statusEl = document.getElementById("status");
+    const statusLine = document.getElementById("statusLine");
+    const dotRow = document.getElementById("exampleDots");
+    const masterFill = document.getElementById("masterFill");
+    const masterValueEl = document.getElementById("masterValue");
+    const advRing = document.getElementById("advRing");
+    const ringLabel = document.getElementById("ringLabel");
+    const evalBtn = document.getElementById("evalBtn");
+
+    const pieceGlyphs = {
+      K: "♔",
+      Q: "♕",
+      R: "♖",
+      B: "♗",
+      N: "♘",
+      P: "♙",
+      k: "♚",
+      q: "♛",
+      r: "♜",
+      b: "♝",
+      n: "♞",
+      p: "♟",
+    };
+
+    let requestSeq = 0;
+    let currentFen = START_FEN;
+    const histories = {
+      cnn: [],
+      sf: [],
+    };
 
     function clamp(value, min, max) {
       return Math.max(min, Math.min(max, value));
     }
 
-    function formatCp(value) {
-      if (value === null || value === undefined) {
-        return "Unavailable";
-      }
-      const n = Number(value);
-      if (!Number.isFinite(n)) {
-        return "Unavailable";
-      }
-      return `${n > 0 ? "+" : ""}${n.toFixed(1)} cp`;
+    function toPawns(value) {
+      return value / 100;
     }
 
-    function bucketClass(label) {
-      if (label === "White advantage") return "white";
-      if (label === "Black advantage") return "black";
-      return "equal";
+    function cpToLabel(cp) {
+      if (!Number.isFinite(cp)) return "—";
+      const v = toPawns(cp);
+      const prefix = v > 0 ? "+" : "";
+      return `${prefix}${v.toFixed(1)}`;
     }
 
-    function cpToY(value) {
-      const clamped = clamp(Number(value || 0), -1000, 1000);
-      return 98 - ((clamped + 1000) / 2000) * 96;
+    function setStatus(message, isError = false) {
+      statusEl.textContent = message;
+      statusEl.classList.toggle("error", isError);
     }
 
-    function setError(message) {
-      const box = document.getElementById("errorBox");
-      if (!message) {
-        box.classList.add("hidden");
-        box.textContent = "";
+    function animateValue(element, targetCp) {
+      const startCp = Number(element.dataset.cp || 0);
+      const endCp = Number.isFinite(targetCp) ? targetCp : startCp;
+      const startTs = performance.now();
+      const duration = 300;
+
+      if (startCp === endCp) {
+        element.textContent = cpToLabel(endCp);
         return;
       }
-      box.classList.remove("hidden");
-      box.textContent = message;
-    }
 
-    function syncFenText() {
-      const fen = game.fen();
-      document.getElementById("fenInput").value = fen;
-      document.getElementById("currentFen").textContent = fen;
-      document.getElementById("moveValue").textContent = game.turn() === "w" ? "White" : "Black";
-    }
-
-    function renderSparkline(values, colorFrom, colorTo) {
-      const width = 340;
-      const height = 43;
-      if (!values.length) {
-        return `
-          <svg viewBox="0 0 ${width} ${height}" aria-hidden="true">
-            <defs>
-              <linearGradient id="g" x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0%" stop-color="${colorFrom}" stop-opacity="0.22" />
-                <stop offset="100%" stop-color="${colorTo}" stop-opacity="0.02" />
-              </linearGradient>
-            </defs>
-            <path d="M0,${height / 2} L${width},${height / 2}" class="sparkline-path" stroke="url(#g)"></path>
-          </svg>`;
+      function tick(now) {
+        const elapsed = Math.min(1, (now - startTs) / duration);
+        const eased = 1 - Math.pow(1 - elapsed, 2.7);
+        const current = startCp + (endCp - startCp) * eased;
+        element.textContent = cpToLabel(current);
+        if (elapsed < 1) {
+          requestAnimationFrame(tick);
+        }
       }
-      const min = Math.min(...values, -1000);
-      const max = Math.max(...values, 1000);
-      const range = Math.max(Math.abs(min), Math.abs(max), 200);
-      const stepX = width / (MAX_SPARK - 1);
-      let d = "";
-      values.forEach((val, index) => {
-        const x = index * stepX;
-        const y = ((range - clamp(val, -range, range)) / (2 * range)) * (height - 4) + 2;
-        d += `${index === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)} `;
-      });
+      requestAnimationFrame(tick);
+      element.dataset.cp = endCp;
+    }
+
+    function boardFromFen(fen) {
+      const boardPart = String(fen || "").trim().split(" ")[0];
+      const rows = boardPart.split("/");
+      const grid = document.createElement("div");
+      grid.className = "chess-grid";
+
+      for (let r = 0; r < 8; r++) {
+        const row = rows[r] || "";
+        let file = 0;
+        for (const ch of row) {
+          if (file >= 8) break;
+          if (/\d/.test(ch)) {
+            const count = Number(ch);
+            for (let i = 0; i < count; i++) {
+              const square = document.createElement("div");
+              square.className = `square ${((r + file) % 2 === 0) ? "light-square" : "dark-square"}`;
+              grid.appendChild(square);
+              file++;
+            }
+            continue;
+          }
+          const square = document.createElement("div");
+          square.className = `square ${((r + file) % 2 === 0) ? "light-square" : "dark-square"}`;
+          const glyph = pieceGlyphs[ch];
+          if (glyph) {
+            const p = document.createElement("span");
+            p.className = `piece ${ch === ch.toUpperCase() ? "white" : "black"}`;
+            p.textContent = glyph;
+            square.appendChild(p);
+          }
+          grid.appendChild(square);
+          file++;
+        }
+        while (file < 8) {
+          const square = document.createElement("div");
+          square.className = `square ${((r + file) % 2 === 0) ? "light-square" : "dark-square"}`;
+          grid.appendChild(square);
+          file++;
+        }
+      }
+
+      while (grid.childElementCount < 64) {
+        const square = document.createElement("div");
+        const rowIndex = Math.floor(grid.childElementCount / 8);
+        const column = grid.childElementCount % 8;
+        square.className = `square ${((rowIndex + column) % 2 === 0) ? "light-square" : "dark-square"}`;
+        grid.appendChild(square);
+      }
+      boardEl.replaceChildren(grid);
+    }
+
+    function buildSpark(values, color) {
+      const width = 260;
+      const height = 52;
+      const safe = values.length ? values : [0, 0];
+      const minRaw = Math.min(...safe);
+      const maxRaw = Math.max(...safe);
+      const range = Math.max(Math.abs(minRaw), Math.abs(maxRaw), 200);
+      const norm = safe.map(v => clamp(v, -range, range));
+      const xStep = width / Math.max(1, safe.length - 1);
+      const pts = norm.map((value, index) => {
+        const x = index * xStep;
+        const y = (0.5 - value / (2 * range)) * (height - 8) + 4;
+        return `${index === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)}`;
+      }).join(" ");
+      const id = `line-${color.replace("#", "")}`;
       return `
-        <svg viewBox="0 0 ${width} ${height}" aria-hidden="true">
+        <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
           <defs>
-            <linearGradient id="g" x1="0" y1="0" x2="1" y2="0">
-              <stop offset="0%" stop-color="${colorFrom}" stop-opacity="0.46" />
-              <stop offset="100%" stop-color="${colorTo}" stop-opacity="0.06" />
+            <linearGradient id="${id}" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stop-color="${color}" stop-opacity="0.45" />
+              <stop offset="100%" stop-color="${color}" stop-opacity="0.1" />
             </linearGradient>
           </defs>
-          <path d="${d}" class="sparkline-path" stroke="url(#g)"></path>
-        </svg>`;
-    }
-
-    function updateSparkline(elementId, values, colorFrom, colorTo) {
-      const element = document.getElementById(elementId);
-      element.innerHTML = renderSparkline(values, colorFrom, colorTo);
-      const path = element.querySelector("path");
-      if (!path) return;
-      const length = path.getTotalLength ? path.getTotalLength() : 0;
-      path.style.strokeDasharray = `${length}`;
-      path.style.strokeDashoffset = `${length}`;
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          path.style.transition = "stroke-dashoffset .65s cubic-bezier(0.25, 1, 0.5, 1)";
-          path.style.strokeDashoffset = "0";
-        });
-      });
-    }
-
-    function animateButtonSuccess(button) {
-      const icon = button.querySelector("svg");
-      if (!icon) return;
-      icon.innerHTML = `<path d="M6 12l4 4 8-8" stroke="#10B981" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`;
-      button.classList.add("text-emerald-300");
-      setTimeout(() => {
-        icon.innerHTML = button.id === "copyFenBtn" ?
-          `<path d="M8 9h8v8H8V9Z" stroke="currentColor" stroke-width="1.6"/><path d="M12 4v2M12 18v2M6 7H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h2m10-14h1a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />` :
-          `<path d="M9 4h6a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="1.6"/><path d="M7 8h10M7 11h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M11 15h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>`;
-        button.classList.remove("text-emerald-300");
-      }, 620);
-    }
-
-    function renderCards(payload) {
-      const evaluations = payload.evaluations || [];
-      const map = new Map(evaluations.map((item) => [item.name, item]));
-      const material = map.get("Material") || { cp: null, label: "Unavailable", note: "" };
-      const cnn = map.get("CNN") || { cp: null, label: "Unavailable", note: "" };
-      const stockfish = map.get("Stockfish") || { cp: null, label: "Unavailable", note: "" };
-
-      if (cnn.cp !== null) {
-        sparkHistories.CNN.push(Number(cnn.cp));
-        if (sparkHistories.CNN.length > MAX_SPARK) sparkHistories.CNN.shift();
-      }
-      if (stockfish.cp !== null) {
-        sparkHistories.Stockfish.push(Number(stockfish.cp));
-        if (sparkHistories.Stockfish.length > MAX_SPARK) sparkHistories.Stockfish.shift();
-      }
-
-      const cnnMarker = clamp(Number(cnn.cp || 0), -1000, 1000);
-      const sfMarker = clamp(Number(stockfish.cp || 0), -1000, 1000);
-      const container = document.getElementById("evalGrid");
-      container.innerHTML = `
-        <article id="cnnCard" class="eval-card sheet rounded-xl p-4">
-          <div class="flex items-start justify-between gap-3">
-            <div>
-              <p class="text-xs uppercase tracking-[0.15em] text-slate-400">CNN Predictor</p>
-              <h3 class="mt-1 text-lg font-semibold tracking-wide">ResNet34 Static Evaluator</h3>
-              <span class="mt-2 inline-flex badge ${bucketClass(cnn.label)}">${cnn.label}</span>
-            </div>
-            <p class="mono text-2xl font-semibold text-emerald-300">${formatCp(cnn.cp)}</p>
-          </div>
-          <div class="mt-3 text-sm text-slate-300">${cnn.note || "No message."}</div>
-          <div class="sparkline-wrap" id="cnnSparkline"></div>
-          <details class="spec-open">
-            <summary>Model specifications</summary>
-            <div class="spec-panel">
-              <div class="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-300">
-                <div class="sheet rounded-lg p-2">MAE <span class="float-right mono text-slate-200">125.22 cp</span></div>
-                <div class="sheet rounded-lg p-2">Bucket Accuracy <span class="float-right mono text-slate-200">89.01%</span></div>
-                <div class="sheet rounded-lg p-2 col-span-2">Clean Bucket Accuracy <span class="float-right mono text-slate-200">95.12%</span></div>
-              </div>
-            </div>
-          </details>
-        </article>
-        <article id="sfCard" class="eval-card sheet rounded-xl p-4">
-          <div class="flex items-start justify-between gap-3">
-            <div>
-              <p class="text-xs uppercase tracking-[0.15em] text-slate-400">Stockfish</p>
-              <h3 class="mt-1 text-lg font-semibold tracking-wide">Engine Ground-Truth Snapshot</h3>
-              <span class="mt-2 inline-flex badge white">${stockfish.label}</span>
-            </div>
-            <p class="mono text-2xl font-semibold text-indigo-300">${formatCp(stockfish.cp)}</p>
-          </div>
-          <div class="mt-3 text-sm text-slate-300">Material score: ${
-            material.cp === null ? "Unavailable" : `${formatCp(material.cp)} · ${Number(material.cp / 100).toFixed(2)} pawns`
-          }</div>
-          <div class="sparkline-wrap" id="sfSparkline"></div>
-          <div class="text-xs text-slate-400 mt-1">${stockfish.note || "No message."}</div>
-        </article>
+          <path d="${pts}" stroke="url(#${id})" />
+        </svg>
       `;
-      updateSparkline("cnnSparkline", sparkHistories.CNN, "#10b981", "#06b6d4");
-      updateSparkline("sfSparkline", sparkHistories.Stockfish, "#6366f1", "#38bdf8");
-      updateGauge(Math.abs(cnnMarker) > 0 ? cnnMarker : 0);
     }
 
-    function updateGauge(cp) {
-      const marker = document.getElementById("gaugeMarker");
-      const fill = document.getElementById("gaugeFill");
-      const fillPct = clamp(((Number(cp) + 1000) / 2000) * 100, 0, 100);
-      const top = cpToY(cp);
-      marker.style.top = `${top}%`;
-      fill.style.height = `${100 - fillPct}%`;
-      fill.style.top = `${fillPct}%`;
-      fill.firstElementChild.style.transform = `translateY(${fillPct - 100}%)`;
+    function updateMaster(cp) {
+      const clamped = clamp(Number.isFinite(cp) ? cp : 0, -1000, 1000);
+      const ratio = (clamped + 1000) / 2000;
+      const spread = Math.abs(ratio - 0.5) * 2;
+      const widthPercent = clamp(Math.max(4, 50 * spread), 4, 50);
+
+      if (clamped >= 0) {
+        masterFill.style.left = "50%";
+      } else {
+        masterFill.style.left = `${50 - widthPercent}%`;
+      }
+      masterFill.style.width = `${widthPercent}%`;
+
+      if (clamped > 60) {
+        masterFill.style.background = "#ffffff";
+        masterFill.style.boxShadow = "0 0 28px rgba(255,255,255,0.55)";
+      } else if (clamped < -60) {
+        masterFill.style.background = "#111111";
+        masterFill.style.boxShadow = "0 0 24px rgba(255,255,255,0.2)";
+      } else {
+        masterFill.style.background = "#444444";
+        masterFill.style.boxShadow = "0 0 20px rgba(255,255,255,0.22)";
+      }
+
+      masterValueEl.textContent = cpToLabel(clamped);
+      animateRing(clamped);
     }
 
-    function setupExamples() {
-      const mount = document.getElementById("exampleButtons");
-      Object.entries(EXAMPLES).forEach(([label, fen]) => {
-        const chip = document.createElement("button");
-        chip.type = "button";
-        chip.className = "chip rounded-full px-3 py-1.5 text-xs";
-        chip.textContent = label;
-        chip.addEventListener("click", () => {
-          document.querySelectorAll(".chip.active").forEach((item) => item.classList.remove("active"));
-          chip.classList.add("active");
-          loadFen(fen);
-        });
-        mount.appendChild(chip);
-      });
-    }
-
-    async function fetchHealth() {
-      try {
-        const response = await fetch("/api/health");
-        const health = await response.json();
-        document.getElementById("diagStatusLine").textContent = `Backend Status: ${response.ok ? "Online (Flask API)" : "Offline"}`;
-        const stockfish = health.stockfish || "Unavailable";
-        const hasNnue = (health.stockfish_nets && Object.keys(health.stockfish_nets).length) || health.custom_stockfish_eval_file;
-        document.getElementById("diagBinaryLine").textContent = `Stockfish: ${stockfish}`;
-        document.getElementById("diagNnueLine").textContent = `NNUE: ${hasNnue ? "Active" : "Not found"}`;
-        document.getElementById("statusDot").classList.toggle("off", !response.ok);
-        const sfConnected = stockfish !== "Unavailable" && !stockfish.includes("None") && response.ok;
-        document.getElementById("sfDot").classList.toggle("off", !sfConnected);
-        document.getElementById("nnueDot").classList.toggle("off", !hasNnue);
-      } catch {
-        document.getElementById("diagStatusLine").textContent = "Backend Status: Offline";
-        document.getElementById("diagBinaryLine").textContent = "Stockfish: Unreachable";
-        document.getElementById("diagNnueLine").textContent = "NNUE: Unknown";
-        document.getElementById("statusDot").classList.add("off");
-        document.getElementById("sfDot").classList.add("off");
-        document.getElementById("nnueDot").classList.add("off");
+    function animateRing(cp) {
+      advRing.classList.remove("white", "equal", "black");
+      if (cp > 60) {
+        advRing.classList.add("white");
+        ringLabel.textContent = "White Advantage";
+      } else if (cp < -60) {
+        advRing.classList.add("black");
+        ringLabel.textContent = "Black Advantage";
+      } else {
+        advRing.classList.add("equal");
+        ringLabel.textContent = "Equal";
       }
     }
 
-    async function evaluateCurrentPosition() {
-      const id = ++requestId;
-      syncFenText();
-      setError("");
-      const cnnCard = document.getElementById("cnnCard");
-      const sfCard = document.getElementById("sfCard");
-      const panel = document.getElementById("analyticsPanel");
-      if (cnnCard) cnnCard.classList.add("loading");
-      if (sfCard) sfCard.classList.add("loading");
-      panel.classList.add("opacity-95");
-      const depth = Number(document.getElementById("depthInput").value || 14);
+    function updateModel(side, payload) {
+      const valueEl = document.getElementById(`${side}Value`);
+      const sparkEl = document.getElementById(`${side}Spark`);
 
+      if (!payload || payload.cp === null || payload.cp === undefined) {
+        valueEl.textContent = "—";
+        valueEl.dataset.cp = 0;
+        sparkEl.innerHTML = buildSpark([0, 0], "#888888");
+        return;
+      }
+
+      const cp = Number(payload.cp);
+      if (Number.isFinite(cp)) {
+        histories[side].push(cp);
+        if (histories[side].length > MAX_SPARK) histories[side].shift();
+        animateValue(valueEl, cp);
+        sparkEl.innerHTML = buildSpark(histories[side], side === "cnn" ? "#ffffff" : "#cccccc");
+      }
+    }
+
+    function renderExamples() {
+      const names = Object.entries(EXAMPLES);
+      names.forEach(([label, fen], index) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = String(index + 1);
+        btn.title = label;
+        btn.addEventListener("click", () => {
+          dotRow.querySelectorAll("button").forEach((el) => el.classList.remove("active"));
+          btn.classList.add("active");
+          fenInput.value = fen;
+          triggerEvaluate();
+        });
+        dotRow.appendChild(btn);
+      });
+    }
+
+    function markTurn(turn, isCheck, isOver) {
+      turnBadge.textContent = `Turn · ${turn}`;
+      stateBadge.textContent = isCheck ? "Check" : (isOver ? "Game over" : "Live");
+    }
+
+    function setLoading(loading) {
+      if (loading) {
+        stateBadge.textContent = "Evaluating…";
+      }
+      evalBtn.disabled = loading;
+    }
+
+    async function evaluateCurrent() {
+      const id = ++requestSeq;
+      setLoading(true);
+      setStatus("Evaluating...");
       try {
         const response = await fetch("/api/evaluate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ fen: game.fen(), stockfish_depth: depth, stockfish_time: 0.25 })
+          body: JSON.stringify({ fen: currentFen, stockfish_depth: 14, stockfish_time: 0.25 }),
         });
         const payload = await response.json();
-        if (id !== requestId) return;
+        if (id !== requestSeq) return;
         if (!response.ok) {
-          setError(payload.error || "Evaluation failed");
+          setStatus(payload.error || "Evaluation failed", true);
           return;
         }
-        document.getElementById("turnValue").textContent = payload.turn;
-        document.getElementById("checkValue").textContent = payload.is_check ? "Yes" : "No";
-        document.getElementById("statusValue").textContent = payload.is_game_over ? "Game over" : "Live";
-        renderCards(payload);
-      } catch (error) {
-        if (id === requestId) setError(`Server request failed: ${error}`);
+
+        const results = Object.fromEntries((payload.evaluations || []).map((item) => [item.name, item]));
+        boardFromFen(payload.fen || currentFen);
+        markTurn(payload.turn || "White", payload.is_check, payload.is_game_over);
+
+        const cnn = results.CNN || null;
+        const stockfish = results.Stockfish || null;
+        updateModel("cnn", cnn);
+        updateModel("sf", stockfish);
+
+        const anchor = Number.isFinite(stockfish?.cp) ? stockfish.cp : Number.isFinite(cnn?.cp) ? cnn.cp : 0;
+        updateMaster(anchor);
+
+        currentFen = payload.fen || currentFen;
+        fenInput.value = currentFen;
+        setStatus("Updated");
+        setTimeout(() => setStatus("Type or pick a position below"), 1200);
+        statusLine.textContent = `${cnn ? "AI Intuition" : "—"}  ·  ${stockfish ? "Stockfish" : "—"}  ·  two-column momentum`;
       } finally {
-        if (id === requestId) {
-          if (cnnCard) cnnCard.classList.remove("loading");
-          if (sfCard) sfCard.classList.remove("loading");
-          panel.classList.remove("opacity-95");
+        if (id === requestSeq) {
+          setLoading(false);
         }
       }
     }
 
-    function onDragStart(source, piece) {
-      if (game.game_over()) return false;
-      if (game.turn() === "w" && piece.search(/^b/) !== -1) return false;
-      if (game.turn() === "b" && piece.search(/^w/) !== -1) return false;
-    }
-
-    function onDrop(source, target) {
-      const move = game.move({ from: source, to: target, promotion: "q" });
-      if (move === null) return "snapback";
-      evaluateCurrentPosition();
-    }
-
-    function onSnapEnd() {
-      board.position(game.fen());
-    }
-
-    function loadFen(fen) {
-      const next = new Chess();
-      const ok = next.load(fen.trim());
-      if (!ok) {
-        setError("Invalid FEN");
-        return;
-      }
-      game = next;
-      board.position(game.fen(), false);
-      evaluateCurrentPosition();
-    }
-
-    async function pasteFromClipboard() {
-      try {
-        const text = await navigator.clipboard.readText();
-        document.getElementById("fenInput").value = text || "";
-        if (text) loadFen(text);
-      } catch {
-        setError("Clipboard read denied");
-      }
-    }
-
-    async function copyToClipboard() {
-      try {
-        await navigator.clipboard.writeText(document.getElementById("fenInput").value.trim());
-        animateButtonSuccess(document.getElementById("copyFenBtn"));
-      } catch {
-        setError("Clipboard write denied");
-      }
-    }
-
-    function initBoard() {
-      board = Chessboard("board", {
-        draggable: true,
-        position: "start",
-        pieceTheme: "https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png",
-        moveSpeed: 220,
-        showNotation: false,
-        onDragStart,
-        onDrop,
-        onSnapEnd
-      });
+    function triggerEvaluate() {
+      const nextFen = String(fenInput.value || START_FEN).trim();
+      currentFen = nextFen;
+      boardFromFen(nextFen);
+      evaluateCurrent();
     }
 
     window.addEventListener("DOMContentLoaded", () => {
-      initBoard();
-      setupExamples();
-      syncFenText();
-      evaluateCurrentPosition();
-      fetchHealth();
-      document.getElementById("loadFenBtn").addEventListener("click", () => loadFen(document.getElementById("fenInput").value));
-      document.getElementById("resetBtn").addEventListener("click", () => loadFen(START_FEN));
-      document.getElementById("flipBtn").addEventListener("click", () => board.flip());
-      document.getElementById("depthInput").addEventListener("change", evaluateCurrentPosition);
-      document.getElementById("copyFenBtn").addEventListener("click", copyToClipboard);
-      document.getElementById("pasteFenBtn").addEventListener("click", () => {
-        pasteFromClipboard();
-        animateButtonSuccess(document.getElementById("pasteFenBtn"));
+      boardFromFen(START_FEN);
+      fenInput.value = START_FEN;
+      renderExamples();
+      const first = dotRow.querySelector("button");
+      if (first) first.classList.add("active");
+      triggerEvaluate();
+      evalBtn.addEventListener("click", triggerEvaluate);
+      fenInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          triggerEvaluate();
+        }
       });
-      window.addEventListener("resize", board.resize);
-      const info = document.querySelector("details");
-      if (info) {
-        info.addEventListener("toggle", (ev) => {
-          ev.currentTarget.classList.toggle("spec-open", ev.currentTarget.open);
-        });
-      }
-      setTimeout(fetchHealth, 1200);
-      setInterval(fetchHealth, 9000);
+      boardEl.addEventListener("click", () => fenInput.focus());
     });
   </script>
 </body>
