@@ -2,71 +2,80 @@
 
 ## Project Overview
 
-This project builds a machine learning product that evaluates chess positions from FEN notation. Given a board position, the model predicts a centipawn score and a simpler advantage label: `Black advantage`, `Equal`, or `White advantage`.
+This project trains a neural network to evaluate chess positions from FEN notation. The model predicts a centipawn score, where positive values favor White and negative values favor Black. It also predicts a simple label: `Black advantage`, `Equal`, or `White advantage`.
 
-The final demo lets a user enter or choose a chess position and compare two approaches:
-
-- a material-only baseline
-- a trained CNN model
-
-Positive centipawn values mean White is better. Negative values mean Black is better.
+The project includes training code, evaluation scripts, prediction scripts, a Flask web app, and a Hugging Face/Gradio app. The model is a static evaluator, not a full chess engine, because it does not search future moves.
 
 ## Dataset Used
 
-The project uses public chess evaluation datasets containing FEN positions and engine evaluations. The main supported sources are:
+The project uses public chess evaluation datasets made of chess positions and engine scores.
 
-- Kaggle Chess Evaluations: https://www.kaggle.com/datasets/ronakbadhe/chess-evaluations
-- Lichess Chess Evaluations: https://www.kaggle.com/datasets/lichess/chess-evaluations
-- Optional extra FEN/evaluation data: https://www.kaggle.com/datasets/dev102/chess-fens-evaluations-dataset
+Main sources:
 
-The large training run validated `23,978,399` FEN rows. The training split used `19,182,719` positions and the validation split used `2,397,839` positions. The final reported test metrics were measured on a heldout `100,000`-position test sample.
+| Dataset | Use |
+|---|---|
+| Kaggle Chess Evaluations | Main FEN/evaluation source |
+| Dev102 Chess FENs Evaluations | Extra FEN/evaluation rows |
+| Random and tactic evaluation CSVs | Extra local coverage |
+
+The active reported run found `24,507,255` raw rows and used `1,000,000` cleaned rows.
+
+| Split | Samples |
+|---|---:|
+| Train | 800,000 |
+| Validation | 100,000 |
+| Test | 100,000 |
 
 Input features:
 
-- FEN string representing the chess position
-- Encoded board as `12 x 8 x 8` piece planes
-- 16 scalar features including side to move, castling rights, en passant availability, clocks, material balance, piece counts, queen count, and simple king-safety proxies
+| Feature type | Description |
+|---|---|
+| Board planes | `12 x 8 x 8` binary planes, one plane for each piece type and color |
+| Extra features | 16 scalar features |
+| FEN metadata | Turn, castling rights, en passant, halfmove clock, and fullmove number |
+| Chess summaries | Material balance, piece counts, queen count, and simple king-safety features |
 
 Target values:
 
-- Stockfish-style centipawn evaluation
-- Derived advantage bucket: Black / Equal / White
+| Target | Description |
+|---|---|
+| Centipawn score | Engine evaluation clipped to a fixed range |
+| Advantage bucket | Black advantage, Equal, or White advantage |
+
+The test set is not perfectly balanced.
+
+| Class | Test Share |
+|---|---:|
+| Equal | 47.38% |
+| White advantage | 28.77% |
+| Black advantage | 23.84% |
+
+This means accuracy should be interpreted carefully because the `Equal` class is the largest class.
 
 ## Data Cleanup And Preprocessing
 
-The dataset needed meaningful preprocessing before training:
+The project performed these cleanup steps:
 
-- auto-detected FEN and evaluation columns across downloaded CSV files
-- parsed centipawn and mate-style labels
-- dropped forced-mate labels in the strongest training runs because mate labels are not directly comparable to centipawns
-- validated FEN strings with `python-chess`
-- removed invalid or unparsable rows
-- clipped extreme evaluations to reduce instability from outliers
-- transformed target centipawns with a `tanh` target transform
-- encoded each board into 12 piece planes
-- added scalar chess-state features
-- split data into train, validation, and test sets
-- cached encoded features using compressed arrays or packed memory-mapped bitboards
-- used mirror augmentation by swapping colors and negating the target evaluation
+| Step | Explanation |
+|---|---|
+| Column detection | The loader auto-detects FEN and evaluation columns across CSV files |
+| Missing value removal | Rows with missing FENs or evaluations are removed |
+| FEN validation | Invalid chess positions are removed using `python-chess` |
+| Evaluation parsing | Numeric scores and mate-style labels are parsed |
+| Mate label filtering | Forced-mate labels are dropped in the stronger training runs |
+| Clipping | Extreme evaluations are clipped to reduce outlier impact |
+| Target transform | Centipawn values are transformed with `tanh` |
+| Board encoding | FENs are converted into `12 x 8 x 8` piece planes |
+| Feature scaling | Extra scalar features are normalized into small numeric ranges |
+| Data split | Data is split into train, validation, and test sets |
+| Caching | Encoded features are cached to speed up later runs |
+| Mirror augmentation | Some positions are color-swapped and their target score is negated |
 
-## Model
+The active run dropped `528,856` mate-label rows before training/evaluation.
 
-The final model is a CNN based on ResNet34 adapted for chess boards.
+## Model Information
 
-Architecture summary:
-
-```text
-FEN
--> board encoder
--> 12x8x8 piece planes + 16 scalar features
--> ResNet34 visual backbone
--> dense head
--> centipawn regression output
--> Black/Equal/White bucket output
--> calibrated bucket decision
-```
-
-The model was trained from scratch, not from ImageNet weights. The ResNet stem was changed to accept 12 input channels and to preserve the small `8 x 8` board resolution.
+The final model is based on ResNet34. It was trained from scratch, not from ImageNet pretrained weights.
 
 Parameter count: `21,685,380`.
 
@@ -75,88 +84,103 @@ Important hyperparameters:
 | Hyperparameter | Value |
 |---|---:|
 | Backbone | ResNet34 |
+| Batch size | 4096 |
+| Epochs configured | 40 |
+| Learning rate | 0.001 |
+| Weight decay | 0.0001 |
+| Dropout | 0.15 |
+| Head hidden size | 512 |
 | Target transform | tanh |
 | Target scale | 900 |
 | Evaluation clip | 3000 cp |
-| Dropout | 0.15 |
-| Bucket loss weight | 0.8 |
-| Bucket margin | 75 cp |
-| Bucket class balancing | enabled |
-| Mirror augmentation | enabled |
+| Huber beta | 0.25 |
+| Advantage loss weight | 0.5 |
+| Bucket loss weight | 1.0 |
+| Gradient clipping | 1.0 |
+| Mirror augmentation | Enabled |
 
-## Evaluation Metrics
+## Architecture
 
-This project uses both regression and classification metrics.
+The architecture is:
 
-- MAE in centipawns: average size of the evaluation error
-- RMSE in centipawns: penalizes large mistakes more strongly
-- Pearson correlation: measures whether the model ranks positions similarly to the target engine
-- Bucket accuracy: percentage of positions classified as Black / Equal / White correctly
-- Clean bucket accuracy: bucket accuracy excluding ambiguous positions close to the +/-150 cp thresholds
+```text
+FEN
+-> board encoder
+-> 12x8x8 piece planes
+-> 16 extra scalar features
+-> modified ResNet34 backbone
+-> dense prediction head
+-> centipawn regression output
+-> 3-class bucket output
+```
 
-Final CNN test metrics:
+The ResNet34 architecture was changed for chess boards. The first convolution accepts 12 input channels instead of 3 image channels. The initial max-pooling layer is removed because an `8 x 8` chess board is very small, and early downsampling would lose too much board information.
+
+The extra scalar features are joined with the ResNet output before the final prediction layers. This helps the model use information that is easier to express as numbers, such as castling rights, side to move, and material balance.
+
+## Metrics Of Evaluation
+
+The project uses both regression and classification metrics.
+
+| Metric | Why It Was Used |
+|---|---|
+| MAE | Easy to understand average centipawn error |
+| RMSE | Penalizes large mistakes more strongly |
+| Pearson correlation | Measures whether predictions follow the same trend as engine scores |
+| Bucket accuracy | Measures Black/Equal/White classification quality |
+| Direct bucket accuracy | Measures the direct 3-class classifier head |
+
+Final test metrics from `runs/evaluation_metrics.json`:
 
 | Metric | Value |
 |---|---:|
-| MAE | 125.22 cp |
-| RMSE | 277.30 cp |
-| Pearson correlation | 0.873 |
-| Bucket accuracy from regression | 88.78% |
-| Direct bucket accuracy | 89.01% |
-| Clean direct bucket accuracy | 95.12% |
+| MAE | 130.44 cp |
+| RMSE | 284.04 cp |
+| Pearson correlation | 0.860 |
+| Bucket accuracy from regression | 86.87% |
+| Direct bucket accuracy | 87.19% |
+| Test samples | 100,000 |
 
 Baseline comparison artifact:
 
 | Model | MAE cp | RMSE cp | Pearson | Bucket Accuracy |
 |---|---:|---:|---:|---:|
 | Material baseline | 270.87 | 441.26 | 0.461 | 63.49% |
-| CNN analysis checkpoint | 151.63 | 284.79 | 0.811 | 82.47% |
+| CNN checkpoint | 151.63 | 284.79 | 0.811 | 82.47% |
 
-The final calibrated CNN improves beyond the analysis checkpoint and is the model used in the app.
+The CNN performs much better than the material-only baseline because it can learn board patterns, not only piece values.
 
-## Performance Analysis
+## Analysis Of Model Performance
 
-The CNN strongly outperforms the material-only baseline because it learns positional information beyond piece count. For example, it can use side to move, king safety, castling rights, pawn structure proxies, and board patterns.
+The model gives useful static evaluations. Its average error is about `130 cp`, which is roughly a little more than one pawn. Its correlation of `0.860` shows that it usually ranks positions in the same direction as the engine labels.
 
-The model performs best when positions are clearly better for one side or clearly equal. The hardest examples are positions near the classification boundaries around `-150 cp` and `+150 cp`, where even small centipawn errors can flip the bucket label. This is why clean bucket accuracy is much higher than full bucket accuracy.
+The bucket accuracy is also strong. The model is best when a position is clearly winning, losing, or equal. It is weaker near the `+/-150 cp` bucket boundary, where a small centipawn error can change the class label.
 
-The final calibration step improved direct bucket accuracy by adjusting the classifier's Black/Equal/White decision bias using validation predictions.
-
-## Deployment
-
-The local product app is a Flask app in `app.py`.
-
-The Hugging Face deployment entrypoint is `hf_app.py`, a Gradio app designed for Spaces. The online demo avoids relying on a local Stockfish binary and compares the CNN with the material baseline.
-
-To run locally:
-
-```bash
-uv run python app.py
-```
-
-To test the Hugging Face app locally after installing Gradio:
-
-```bash
-uv run python hf_app.py
-```
+The CNN is much stronger than a material baseline. This shows that the model learned positional patterns such as activity, king safety, side to move, and board structure.
 
 ## Limitations And Ethics
 
 Limitations:
 
-- The CNN is a static evaluator, not a chess engine.
-- It does not search future moves.
-- It can miss tactics, checkmates, and long forcing sequences.
-- Labels come from engine evaluations, so the model learns to approximate the dataset rather than true perfect chess understanding.
-- Positions near the Black/Equal/White thresholds are noisy and difficult to classify.
+| Limitation | Explanation |
+|---|---|
+| No move search | The model evaluates only the current position |
+| Tactical mistakes | It can miss tactics, checkmates, and forcing lines |
+| Label dependency | It learns from engine labels, so errors or bias in labels affect the model |
+| Boundary noise | Positions near `+/-150 cp` are hard to bucket correctly |
+| Not a chess engine | It should not be treated as a replacement for Stockfish |
 
 Ethics:
 
-- The project uses public chess datasets.
-- It does not use private or sensitive personal data.
-- The model should be presented as an educational evaluator, not as a replacement for a real chess engine.
+| Topic | Explanation |
+|---|---|
+| Data privacy | The project uses public chess-position data, not personal user data |
+| Intended use | The model is best used for learning, experimentation, and demonstration |
+| Misuse risk | It should not be presented as perfect chess understanding |
 
 ## Reflection
 
-This project showed the full process of taking a model from data to product. The most important lesson was that model accuracy is not only about training longer. Data cleaning, target design, evaluation metrics, calibration, deployment, and clear reporting all mattered. The final product is useful because it connects the trained model to an interactive app where users can inspect real chess positions.
+This project showed that building a useful model is more than training a network. Data cleaning, FEN validation, target design, feature encoding, evaluation metrics, and deployment all affected the final result.
+
+The biggest lesson was that a static model can learn a lot about chess positions, but it still cannot replace search. The model is useful because it is fast and visual, while Stockfish is stronger because it calculates future moves.
 
