@@ -306,6 +306,7 @@ def stockfish_result(fen: str, depth: int = 14, time_limit: float = 0.25) -> dic
             )
         if cp is None:
             return result_payload("Stockfish", None, "Unavailable", "Stockfish did not return a centipawn score.")
+        mate_like = abs(int(cp)) >= 9000
 
         pv_board = board.copy(stack=False)
         pv_moves = []
@@ -322,12 +323,19 @@ def stockfish_result(fen: str, depth: int = 14, time_limit: float = 0.25) -> dic
             float(cp),
             pretty_label_from_eval(float(cp)),
             note,
+            mate_like=mate_like,
             best_move_san=best_move["san"] if best_move else None,
             best_move_uci=best_move["uci"] if best_move else None,
             pv=pv_moves,
         )
     except Exception as exc:
         return result_payload("Stockfish", None, "Unavailable", f"Stockfish failed: {exc}")
+
+
+def normalize_custom_engine_cp(cp: int) -> tuple[float, bool]:
+    if abs(cp) >= 20000:
+        return (10000.0 if cp > 0 else -10000.0), True
+    return float(cp), False
 
 
 def custom_engine_result(fen: str, depth: int = 10, time_limit: float = 0.25) -> dict[str, Any]:
@@ -351,6 +359,7 @@ def custom_engine_result(fen: str, depth: int = 10, time_limit: float = 0.25) ->
         cp = score.score(mate_score=10000)
         if cp is None:
             return result_payload("Custom Engine", None, "Unavailable", "Custom engine did not return a centipawn score.")
+        display_cp, mate_like = normalize_custom_engine_cp(int(cp))
 
         nodes = int(info.get("nodes", 0) or 0)
         reached_depth = int(info.get("depth", 0) or 0)
@@ -364,12 +373,18 @@ def custom_engine_result(fen: str, depth: int = 10, time_limit: float = 0.25) ->
             pv_moves.append(san)
             pv_board.push(move)
 
-        note = f"Custom C++ engine depth {reached_depth}, nodes {nodes:,}" + (f"; PV: {' '.join(pv_moves)}" if pv_moves else "")
+        note = f"Custom C++ engine depth {reached_depth}, nodes {nodes:,}"
+        if mate_like:
+            note += f"; raw mate-like score {cp} normalized for display"
+        if pv_moves:
+            note += f"; PV: {' '.join(pv_moves)}"
         return result_payload(
             "Custom Engine",
-            float(cp),
-            pretty_label_from_eval(float(cp)),
+            display_cp,
+            pretty_label_from_eval(display_cp),
             note,
+            raw_cp=float(cp),
+            mate_like=mate_like,
             best_move_san=best_move["san"] if best_move else None,
             best_move_uci=best_move["uci"] if best_move else None,
             pv=pv_moves,
@@ -643,23 +658,33 @@ HTML = r"""
     .piece {
       position: relative;
       z-index: 2;
-      width: 76%;
+      width: auto;
       aspect-ratio: 1;
       display: grid;
       place-items: center;
-      border-radius: 0.18rem;
-      border: 1px solid rgba(0, 0, 0, 0.2);
-      box-shadow: 0 3px 0 rgba(0, 0, 0, 0.22);
+      border-radius: 0;
+      border: 0;
+      background: transparent;
+      box-shadow: none;
+      font-size: 1.08em;
     }
     .piece.white {
-      color: var(--piece-white-ink);
-      background: var(--piece-white-bg);
-      text-shadow: none;
+      color: #ffffff;
+      text-shadow:
+        -1px -1px 0 #111827,
+        1px -1px 0 #111827,
+        -1px 1px 0 #111827,
+        1px 1px 0 #111827,
+        0 2px 2px rgba(17, 24, 39, 0.45);
     }
     .piece.black {
-      color: var(--piece-black-ink);
-      background: var(--piece-black-bg);
-      text-shadow: none;
+      color: #111827;
+      text-shadow:
+        -1px -1px 0 rgba(255, 255, 255, 0.7),
+        1px -1px 0 rgba(255, 255, 255, 0.7),
+        -1px 1px 0 rgba(255, 255, 255, 0.7),
+        1px 1px 0 rgba(255, 255, 255, 0.7),
+        0 2px 2px rgba(17, 24, 39, 0.25);
     }
     .board-meta {
       margin-top: 0.8rem;
@@ -800,37 +825,16 @@ HTML = r"""
       pointer-events: none;
       z-index: 4;
     }
-    .move-arrow-layer line {
-      stroke: color-mix(in srgb, var(--accent) 76%, transparent);
-      stroke-width: 2.1;
-      stroke-linecap: round;
-      filter: drop-shadow(0 1px 1px rgba(21, 34, 56, 0.18));
-      stroke-dasharray: 150;
-      stroke-dashoffset: 150;
-      animation: arrowDraw 180ms ease-out forwards;
+    .move-arrow-layer path {
+      filter: drop-shadow(0 1px 1px rgba(21, 34, 56, 0.22));
     }
-    .move-arrow-layer polygon {
-      fill: color-mix(in srgb, var(--accent) 76%, transparent);
-      filter: drop-shadow(0 1px 1px rgba(21, 34, 56, 0.18));
-      opacity: 0;
-      transform-box: fill-box;
-      transform-origin: center;
-      animation: arrowHeadIn 130ms ease-out 120ms forwards;
-    }
-    @keyframes arrowDraw {
-      to {
-        stroke-dashoffset: 0;
-      }
-    }
-    @keyframes arrowHeadIn {
-      from {
-        opacity: 0;
-        transform: scale(0.78);
-      }
-      to {
-        opacity: 1;
-        transform: scale(1);
-      }
+    .square-mark {
+      position: absolute;
+      inset: 7%;
+      z-index: 1;
+      border-radius: 0.18rem;
+      background: rgba(220, 38, 38, 0.46);
+      pointer-events: none;
     }
     .comparison-grid {
       display: grid;
@@ -1148,13 +1152,6 @@ HTML = r"""
             <div id="masterFill" class="master-fill"></div>
           </div>
           <div id="masterValue" class="master-value">—</div>
-          <div class="best-move">
-            <div>
-              <div class="best-move-label">Stockfish best move</div>
-              <div id="bestMoveLine" class="best-move-line">Waiting for engine line</div>
-            </div>
-            <div id="bestMoveValue" class="best-move-value empty">—</div>
-          </div>
           <div id="advRing" class="adv-ring equal"><span></span></div>
           <div id="ringLabel" class="ring-text">Equal</div>
         </div>
@@ -1189,8 +1186,6 @@ HTML = r"""
     const demoMoveLabel = document.getElementById("demoMoveLabel");
     const masterFill = document.getElementById("masterFill");
     const masterValueEl = document.getElementById("masterValue");
-    const bestMoveValue = document.getElementById("bestMoveValue");
-    const bestMoveLine = document.getElementById("bestMoveLine");
     const advRing = document.getElementById("advRing");
     const ringLabel = document.getElementById("ringLabel");
     const evalBtn = document.getElementById("evalBtn");
@@ -1217,6 +1212,10 @@ HTML = r"""
     let demoStartFen = START_FEN;
     let demoLine = [];
     let demoIndex = 0;
+    const highlightedSquares = new Set();
+    const drawnArrows = [];
+    let rightDragStart = null;
+    let customRefineTimer = null;
     const histories = {
       mat: [],
       cnn: [],
@@ -1326,10 +1325,18 @@ HTML = r"""
       };
     }
 
-    function moveArrowSvg(move) {
-      if (!move) return "";
-      const from = squarePoint(move.from);
-      const to = squarePoint(move.to);
+    function arrowPath(move, offset = 0) {
+      if (!move || !move.from || !move.to) return "";
+      const fromBase = squarePoint(move.from);
+      const toBase = squarePoint(move.to);
+      const dxBase = toBase.x - fromBase.x;
+      const dyBase = toBase.y - fromBase.y;
+      const lengthBase = Math.hypot(dxBase, dyBase);
+      if (!lengthBase) return "";
+      const offsetX = (-dyBase / lengthBase) * offset;
+      const offsetY = (dxBase / lengthBase) * offset;
+      const from = { x: fromBase.x + offsetX, y: fromBase.y + offsetY };
+      const to = { x: toBase.x + offsetX, y: toBase.y + offsetY };
       const dx = to.x - from.x;
       const dy = to.y - from.y;
       const length = Math.hypot(dx, dy);
@@ -1338,11 +1345,32 @@ HTML = r"""
       const uy = dy / length;
       const px = -uy;
       const py = ux;
-      const headLength = 3.4;
-      const headHalfWidth = 1.55;
+      const shaftHalfWidth = 0.62;
+      const headLength = 4.6;
+      const headHalfWidth = 2.0;
+      const tail = {
+        x: from.x + ux * 2.2,
+        y: from.y + uy * 2.2,
+      };
       const shaftEnd = {
         x: to.x - ux * headLength,
         y: to.y - uy * headLength,
+      };
+      const tailLeft = {
+        x: tail.x + px * shaftHalfWidth,
+        y: tail.y + py * shaftHalfWidth,
+      };
+      const tailRight = {
+        x: tail.x - px * shaftHalfWidth,
+        y: tail.y - py * shaftHalfWidth,
+      };
+      const shaftLeft = {
+        x: shaftEnd.x + px * shaftHalfWidth,
+        y: shaftEnd.y + py * shaftHalfWidth,
+      };
+      const shaftRight = {
+        x: shaftEnd.x - px * shaftHalfWidth,
+        y: shaftEnd.y - py * shaftHalfWidth,
       };
       const left = {
         x: shaftEnd.x + px * headHalfWidth,
@@ -1352,11 +1380,27 @@ HTML = r"""
         x: shaftEnd.x - px * headHalfWidth,
         y: shaftEnd.y - py * headHalfWidth,
       };
-      const point = ({ x, y }) => `${x.toFixed(2)},${y.toFixed(2)}`;
+      return [
+        `M ${tailLeft.x.toFixed(2)} ${tailLeft.y.toFixed(2)}`,
+        `L ${shaftLeft.x.toFixed(2)} ${shaftLeft.y.toFixed(2)}`,
+        `L ${left.x.toFixed(2)} ${left.y.toFixed(2)}`,
+        `L ${to.x.toFixed(2)} ${to.y.toFixed(2)}`,
+        `L ${right.x.toFixed(2)} ${right.y.toFixed(2)}`,
+        `L ${shaftRight.x.toFixed(2)} ${shaftRight.y.toFixed(2)}`,
+        `L ${tailRight.x.toFixed(2)} ${tailRight.y.toFixed(2)}`,
+        "Z",
+      ].join(" ");
+    }
+
+    function annotationSvg() {
+      const arrows = [];
+      const preview = previewDemoMove();
+      if (preview) arrows.push({ from: preview.from, to: preview.to, color: "rgba(31,122,140,0.86)" });
+      drawnArrows.forEach((arrow) => arrows.push(arrow));
+      if (!arrows.length) return "";
       return `
         <svg class="move-arrow-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-          <line x1="${from.x.toFixed(2)}" y1="${from.y.toFixed(2)}" x2="${shaftEnd.x.toFixed(2)}" y2="${shaftEnd.y.toFixed(2)}" />
-          <polygon points="${point(to)} ${point(left)} ${point(right)}" />
+          ${arrows.map((arrow) => `<path d="${arrowPath(arrow)}" fill="${arrow.color}" opacity="1" />`).join("")}
         </svg>
       `;
     }
@@ -1405,6 +1449,11 @@ HTML = r"""
         const name = squareName(rowIndex, fileIndex);
         square.dataset.square = name;
         square.className = `square ${((rowIndex + fileIndex) % 2 === 0) ? "light-square" : "dark-square"}${selectedSquare === name ? " selected" : ""}${targets.includes(name) ? " target" : ""}`;
+        if (highlightedSquares.has(name)) {
+          const mark = document.createElement("span");
+          mark.className = "square-mark";
+          square.appendChild(mark);
+        }
 
         if (fileIndex === 0) {
           const rank = document.createElement("span");
@@ -1458,7 +1507,7 @@ HTML = r"""
         grid.appendChild(makeSquare(rowIndex, column));
       }
       boardEl.replaceChildren(grid);
-      boardEl.insertAdjacentHTML("beforeend", moveArrowSvg(previewDemoMove()));
+      boardEl.insertAdjacentHTML("beforeend", annotationSvg());
       updateDemoControls();
     }
 
@@ -1523,19 +1572,6 @@ HTML = r"""
       return `${uci.slice(0, 2)} to ${uci.slice(2, 4)}`;
     }
 
-    function updateBestMove(stockfish, turn) {
-      const move = stockfish?.best_move_san || stockfish?.best_move_uci;
-      bestMoveValue.textContent = move || "—";
-      bestMoveValue.classList.toggle("empty", !move);
-      const squares = formatUciSquares(stockfish?.best_move_uci);
-      const pv = stockfish?.pv?.length ? `PV: ${stockfish.pv.join(" ")}` : "";
-      bestMoveLine.textContent = move
-        ? `${turn || "Side to move"}${squares ? ` · ${squares}` : ""}${pv ? ` · ${pv}` : ""}`
-        : "Engine move unavailable";
-      bestMoveValue.title = pv || "";
-      bestMoveLine.title = pv || stockfish?.note || "";
-    }
-
     function animateRing(cp) {
       advRing.classList.remove("white", "equal", "black");
       if (cp > 60) {
@@ -1565,7 +1601,12 @@ HTML = r"""
       if (Number.isFinite(cp)) {
         histories[side].push(cp);
         if (histories[side].length > MAX_SPARK) histories[side].shift();
-        animateValue(valueEl, cp);
+        if (payload.mate_like) {
+          valueEl.textContent = cp < 0 ? "-M" : "M";
+          valueEl.dataset.cp = cp;
+        } else {
+          animateValue(valueEl, cp);
+        }
         const colors = { mat: "#667085", cnn: "#1f7a8c", cxx: "#8a4b12", sf: "#18212f" };
         sparkEl.innerHTML = buildSpark(histories[side], colors[side] || "#1f7a8c");
       }
@@ -1605,8 +1646,45 @@ HTML = r"""
       evalBtn.disabled = loading;
     }
 
+    function cancelCustomRefinement() {
+      if (customRefineTimer) {
+        clearTimeout(customRefineTimer);
+        customRefineTimer = null;
+      }
+    }
+
+    function scheduleCustomRefinement(fen, id, step = 0) {
+      const passes = [
+        { delay: 650, time: 0.75, depth: 12 },
+        { delay: 1100, time: 1.75, depth: 15 },
+        { delay: 1600, time: 3.5, depth: 18 },
+      ];
+      if (step >= passes.length) return;
+      const pass = passes[step];
+      cancelCustomRefinement();
+      customRefineTimer = setTimeout(async () => {
+        if (id !== requestSeq || fen !== currentFen) return;
+        try {
+          statusLine.textContent = `C++ engine deepening… ${pass.time}s`;
+          const response = await fetch("/api/custom-engine", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ fen, depth: pass.depth, time: pass.time }),
+          });
+          const payload = await response.json();
+          if (id !== requestSeq || fen !== currentFen || !response.ok) return;
+          updateModel("cxx", payload);
+          statusLine.textContent = `C++ refined: ${payload.label || "Unavailable"} at ${pass.time}s`;
+          scheduleCustomRefinement(fen, id, step + 1);
+        } catch {
+          if (id === requestSeq) statusLine.textContent = "C++ refinement unavailable";
+        }
+      }, pass.delay);
+    }
+
     async function evaluateCurrent() {
       const id = ++requestSeq;
+      cancelCustomRefinement();
       setLoading(true);
       setStatus("Evaluating...");
       try {
@@ -1632,19 +1710,24 @@ HTML = r"""
         const cnn = results.CNN || null;
         const customEngine = results["Custom Engine"] || null;
         const stockfish = results.Stockfish || null;
+        boardFromFen(payload.fen || currentFen);
         updateModel("mat", material);
         updateModel("cnn", cnn);
         updateModel("cxx", customEngine);
         updateModel("sf", stockfish);
 
-        const anchor = Number.isFinite(stockfish?.cp) ? stockfish.cp : Number.isFinite(customEngine?.cp) ? customEngine.cp : Number.isFinite(cnn?.cp) ? cnn.cp : 0;
+        const anchorSource = Number.isFinite(stockfish?.cp) ? stockfish : Number.isFinite(customEngine?.cp) ? customEngine : Number.isFinite(cnn?.cp) ? cnn : null;
+        const anchor = Number.isFinite(anchorSource?.cp) ? anchorSource.cp : 0;
         updateMaster(anchor);
-        updateBestMove(stockfish, payload.turn);
+        if (anchorSource?.mate_like) {
+          masterValueEl.textContent = anchor < 0 ? "-M" : "M";
+        }
 
         fenInput.value = currentFen;
         setStatus("Updated");
         setTimeout(() => setStatus("Type or pick a position below"), 1200);
         statusLine.textContent = `Material: ${material?.label || "Unavailable"}  ·  CNN: ${cnn?.label || "Unavailable"}  ·  C++: ${customEngine?.label || "Unavailable"}  ·  Stockfish: ${stockfish?.label || "Unavailable"}`;
+        scheduleCustomRefinement(currentFen, id);
       } finally {
         if (id === requestSeq) {
           setLoading(false);
@@ -1687,6 +1770,58 @@ HTML = r"""
 
     function pieceAt(square) {
       return game && square ? game.get(square) : null;
+    }
+
+    function squareFromEvent(event) {
+      const squareEl = event.target.closest(".square");
+      return squareEl ? squareEl.dataset.square : null;
+    }
+
+    function toggleHighlight(square) {
+      if (!square) return;
+      if (highlightedSquares.has(square)) {
+        highlightedSquares.delete(square);
+      } else {
+        highlightedSquares.add(square);
+      }
+      boardFromFen(currentFen);
+    }
+
+    function addOrRemoveArrow(from, to) {
+      if (!from || !to || from === to) return;
+      const existing = drawnArrows.findIndex((arrow) => arrow.from === from && arrow.to === to);
+      if (existing >= 0) {
+        drawnArrows.splice(existing, 1);
+      } else {
+        drawnArrows.push({ from, to, color: "rgba(220,38,38,0.86)" });
+      }
+      boardFromFen(currentFen);
+    }
+
+    function handleBoardContextMenu(event) {
+      event.preventDefault();
+    }
+
+    function handleBoardMouseDown(event) {
+      if (event.button !== 2) return;
+      event.preventDefault();
+      rightDragStart = squareFromEvent(event);
+    }
+
+    function handleBoardMouseUp(event) {
+      if (event.button !== 2) return;
+      event.preventDefault();
+      const target = squareFromEvent(event);
+      if (!rightDragStart || !target) {
+        rightDragStart = null;
+        return;
+      }
+      if (rightDragStart === target) {
+        toggleHighlight(target);
+      } else {
+        addOrRemoveArrow(rightDragStart, target);
+      }
+      rightDragStart = null;
     }
 
     function handleBoardClick(event) {
@@ -1747,6 +1882,9 @@ HTML = r"""
         }
       });
       boardEl.addEventListener("click", handleBoardClick);
+      boardEl.addEventListener("contextmenu", handleBoardContextMenu);
+      boardEl.addEventListener("mousedown", handleBoardMouseDown);
+      boardEl.addEventListener("mouseup", handleBoardMouseUp);
     });
   </script>
 </body>
@@ -1771,6 +1909,21 @@ def create_app() -> Flask:
             time_limit = float(data.get("stockfish_time", 0.25))
             time_limit = max(0.05, min(2.0, time_limit))
             return jsonify(evaluate_position(fen, depth, time_limit))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+
+    @app.post("/api/custom-engine")
+    def api_custom_engine():
+        data = request.get_json(silent=True) or {}
+        fen = str(data.get("fen", "")).strip()
+        try:
+            depth = int(data.get("depth", 12))
+            depth = max(1, min(24, depth))
+            time_limit = float(data.get("time", 1.0))
+            time_limit = max(0.05, min(8.0, time_limit))
+            if not validate_fen(fen):
+                raise ValueError("Invalid FEN.")
+            return jsonify(custom_engine_result(chess.Board(fen).fen(), depth, time_limit))
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
 
