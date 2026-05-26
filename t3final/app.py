@@ -32,10 +32,6 @@ STOCKFISH_CANDIDATES = [
     "/usr/local/bin/stockfish",
     "/usr/bin/stockfish",
 ]
-CUSTOM_ENGINE_CANDIDATES = [
-    os.environ.get("CUSTOM_CHESS_ENGINE_BINARY", ""),
-    "~/Documents/coding/apps/chess/cpp/chess_engine_fast",
-]
 STOCKFISH_NET_NAMES = ("nn-7bf13f9655c8.nnue", "nn-47fc8b7fff06.nnue")
 CUSTOM_STOCKFISH_EVALFILE_CANDIDATES = (
     "models/stockfish/*.nnue",
@@ -88,6 +84,20 @@ EXAMPLE_FENS = {
         "description": "Anderssen vs Dufresne, Berlin 1852. White to move: the pieces are aimed at the king and 19.Rad1 begins the classic Evergreen combination.",
     },
 }
+COMMON_OPENING_LINES = [
+    ["e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4", "Nf6", "O-O", "Be7"],
+    ["e4", "c5", "Nf3", "d6", "d4", "cxd4", "Nxd4", "Nf6", "Nc3", "a6"],
+    ["e4", "e6", "d4", "d5", "Nc3", "Nf6", "e5", "Nfd7", "f4", "c5"],
+    ["d4", "Nf6", "c4", "g6", "Nc3", "Bg7", "e4", "d6", "Nf3", "O-O"],
+    ["d4", "d5", "c4", "e6", "Nc3", "Nf6", "Bg5", "Be7", "e3", "O-O"],
+    ["d4", "Nf6", "c4", "e6", "Nf3", "d5", "g3", "Be7", "Bg2", "O-O"],
+    ["c4", "e5", "Nc3", "Nf6", "g3", "d5", "cxd5", "Nxd5", "Bg2", "Nb6"],
+    ["Nf3", "d5", "g3", "Nf6", "Bg2", "g6", "O-O", "Bg7", "d3", "O-O"],
+    ["e4", "c6", "d4", "d5", "Nc3", "dxe4", "Nxe4", "Bf5", "Ng3", "Bg6"],
+    ["e4", "d5", "exd5", "Qxd5", "Nc3", "Qa5", "d4", "Nf6", "Nf3", "c6"],
+    ["d4", "f5", "g3", "Nf6", "Bg2", "e6", "Nf3", "Be7", "O-O", "O-O"],
+    ["e4", "g6", "d4", "Bg7", "Nc3", "d6", "Be3", "a6", "Qd2", "b5"],
+]
 STOCKFISH_SANITY_FEN = "rnb1kbnr/pppp1ppp/8/4p3/4Q3/8/PPPP1PPP/RNB1KBNR b KQkq - 0 3"
 STOCKFISH_BLACK_SANITY_FEN = "rnbqkbnr/pppp1ppp/8/4p3/8/8/PPPP1PPP/RNB1KBNR w KQkq - 0 3"
 STOCKFISH_KINGS_SANITY_FEN = "8/8/8/4k3/8/8/8/4K3 w - - 0 1"
@@ -105,16 +115,6 @@ def find_stockfish() -> str | None:
     found = shutil.which("stockfish")
     if found:
         return found
-    return None
-
-
-def find_custom_engine() -> str | None:
-    for path in CUSTOM_ENGINE_CANDIDATES:
-        if not path:
-            continue
-        candidate = Path(path).expanduser()
-        if candidate.exists() and os.access(candidate, os.X_OK):
-            return str(candidate.resolve())
     return None
 
 
@@ -251,6 +251,12 @@ def result_payload(name: str, cp: float | None, label: str, note: str, **extra: 
     }
 
 
+def mate_display(mate: int | None) -> str | None:
+    if mate is None:
+        return None
+    return f"M{abs(int(mate))}"
+
+
 def material_result(board: chess.Board) -> dict[str, Any]:
     cp = float(material_evaluation_cp(board))
     return result_payload("Material", cp, pretty_label_from_eval(cp), "Piece values only; no tactics or position.")
@@ -288,6 +294,7 @@ def stockfish_result(fen: str, depth: int = 14, time_limit: float = 0.25) -> dic
 
         score = info["score"].white()
         cp = score.score(mate_score=10000)
+        mate = score.mate()
         nodes = int(info.get("nodes", 0) or 0)
         reached_depth = int(info.get("depth", 0) or 0)
         if nodes <= 0:
@@ -306,7 +313,6 @@ def stockfish_result(fen: str, depth: int = 14, time_limit: float = 0.25) -> dic
             )
         if cp is None:
             return result_payload("Stockfish", None, "Unavailable", "Stockfish did not return a centipawn score.")
-        mate_like = abs(int(cp)) >= 9000
 
         pv_board = board.copy(stack=False)
         pv_moves = []
@@ -323,74 +329,14 @@ def stockfish_result(fen: str, depth: int = 14, time_limit: float = 0.25) -> dic
             float(cp),
             pretty_label_from_eval(float(cp)),
             note,
-            mate_like=mate_like,
+            mate_in=None if mate is None else abs(int(mate)),
+            display_value=mate_display(mate),
             best_move_san=best_move["san"] if best_move else None,
             best_move_uci=best_move["uci"] if best_move else None,
             pv=pv_moves,
         )
     except Exception as exc:
         return result_payload("Stockfish", None, "Unavailable", f"Stockfish failed: {exc}")
-
-
-def normalize_custom_engine_cp(cp: int) -> tuple[float, bool]:
-    if abs(cp) >= 20000:
-        return (10000.0 if cp > 0 else -10000.0), True
-    return float(cp), False
-
-
-def custom_engine_result(fen: str, depth: int = 10, time_limit: float = 0.25) -> dict[str, Any]:
-    engine_path = find_custom_engine()
-    if not engine_path:
-        return result_payload(
-            "Custom Engine",
-            None,
-            "Unavailable",
-            "Custom C++ engine was not found at ~/Documents/coding/apps/chess/cpp/chess_engine_fast.",
-        )
-
-    board = chess.Board(fen)
-    try:
-        with chess.engine.SimpleEngine.popen_uci(engine_path) as engine:
-            info = engine.analyse(board, chess.engine.Limit(depth=depth, time=time_limit), multipv=1)
-            if isinstance(info, list):
-                info = info[0]
-
-        score = info["score"].white()
-        cp = score.score(mate_score=10000)
-        if cp is None:
-            return result_payload("Custom Engine", None, "Unavailable", "Custom engine did not return a centipawn score.")
-        display_cp, mate_like = normalize_custom_engine_cp(int(cp))
-
-        nodes = int(info.get("nodes", 0) or 0)
-        reached_depth = int(info.get("depth", 0) or 0)
-        pv_board = board.copy(stack=False)
-        pv_moves = []
-        best_move = None
-        for move in info.get("pv", [])[:5]:
-            san = pv_board.san(move)
-            if best_move is None:
-                best_move = {"san": san, "uci": move.uci()}
-            pv_moves.append(san)
-            pv_board.push(move)
-
-        note = f"Custom C++ engine depth {reached_depth}, nodes {nodes:,}"
-        if mate_like:
-            note += f"; raw mate-like score {cp} normalized for display"
-        if pv_moves:
-            note += f"; PV: {' '.join(pv_moves)}"
-        return result_payload(
-            "Custom Engine",
-            display_cp,
-            pretty_label_from_eval(display_cp),
-            note,
-            raw_cp=float(cp),
-            mate_like=mate_like,
-            best_move_san=best_move["san"] if best_move else None,
-            best_move_uci=best_move["uci"] if best_move else None,
-            pv=pv_moves,
-        )
-    except Exception as exc:
-        return result_payload("Custom Engine", None, "Unavailable", f"Custom engine failed: {exc}")
 
 
 def evaluate_position(fen: str, stockfish_depth: int = 14, stockfish_time: float = 0.25) -> dict[str, Any]:
@@ -408,7 +354,6 @@ def evaluate_position(fen: str, stockfish_depth: int = 14, stockfish_time: float
         "evaluations": [
             material_result(board),
             cnn_result(board.fen()),
-            custom_engine_result(board.fen(), min(stockfish_depth, 12), stockfish_time),
             stockfish_result(board.fen(), stockfish_depth, stockfish_time),
         ],
     }
@@ -452,9 +397,9 @@ HTML = r"""
       --accent-dark: #125a68;
       --good: #167247;
       --warn: #a45116;
-      --board-light: #d9c7a8;
-      --board-dark: #587363;
-      --board-line: #2f463a;
+      --board-light: #eeeed2;
+      --board-dark: #769656;
+      --board-line: #4b6f3e;
       --piece-white-bg: #f7f4e7;
       --piece-white-ink: #172033;
       --piece-black-bg: #111827;
@@ -475,9 +420,9 @@ HTML = r"""
         --accent-dark: #6ecfe0;
         --good: #48b57b;
         --warn: #d18a42;
-        --board-light: #b9a579;
-        --board-dark: #415f52;
-        --board-line: #91a49a;
+        --board-light: #eeeed2;
+        --board-dark: #769656;
+        --board-line: #4b6f3e;
         --piece-white-bg: #f4f0dc;
         --piece-white-ink: #111827;
         --piece-black-bg: #0b111a;
@@ -524,9 +469,7 @@ HTML = r"""
       line-height: 1.08;
     }
     .headline p {
-      margin: 0;
-      color: var(--muted);
-      font-size: 0.95rem;
+      display: none;
     }
     .panel {
       border: 1px solid var(--line);
@@ -546,8 +489,8 @@ HTML = r"""
     .workspace {
       display: grid;
       gap: 1rem;
-      grid-template-columns: minmax(420px, 0.88fr) minmax(520px, 1.12fr);
-      align-items: stretch;
+      grid-template-columns: minmax(460px, 0.95fr) minmax(480px, 1.05fr);
+      align-items: start;
       min-height: 0;
     }
     @media (max-width: 1100px) {
@@ -566,12 +509,13 @@ HTML = r"""
     }
     .compare-panel {
       display: grid;
-      grid-template-rows: auto auto minmax(0, 1fr);
+      grid-template-rows: auto auto auto;
+      align-content: start;
     }
     .board-wrap {
       display: grid;
       place-items: center;
-      min-height: min(68vh, 42rem);
+      min-height: 0;
     }
     .chess-board {
       position: relative;
@@ -597,8 +541,8 @@ HTML = r"""
       grid-template-rows: repeat(8, minmax(0, 1fr));
       overflow: hidden;
       border: 2px solid var(--board-line);
-      border-radius: 0.2rem;
-      box-shadow: 0 12px 28px rgba(17, 24, 39, 0.22);
+      border-radius: 0.15rem;
+      box-shadow: 0 14px 30px rgba(17, 24, 39, 0.24);
     }
     .square {
       position: relative;
@@ -640,7 +584,7 @@ HTML = r"""
     .coord {
       position: absolute;
       z-index: 1;
-      color: color-mix(in srgb, var(--ink) 70%, transparent);
+      color: rgba(32, 48, 28, 0.72);
       font-size: clamp(0.48rem, 1.1vw, 0.68rem);
       font-weight: 800;
       line-height: 1;
@@ -658,33 +602,27 @@ HTML = r"""
     .piece {
       position: relative;
       z-index: 2;
-      width: auto;
-      aspect-ratio: 1;
+      width: 100%;
+      height: 100%;
       display: grid;
       place-items: center;
+      border: none;
       border-radius: 0;
-      border: 0;
-      background: transparent;
       box-shadow: none;
-      font-size: 1.08em;
+      pointer-events: none;
+    }
+    .piece img {
+      width: 92%;
+      height: 92%;
+      object-fit: contain;
+      display: block;
+      filter: drop-shadow(0 2px 1px rgba(0, 0, 0, 0.22));
     }
     .piece.white {
-      color: #ffffff;
-      text-shadow:
-        -1px -1px 0 #111827,
-        1px -1px 0 #111827,
-        -1px 1px 0 #111827,
-        1px 1px 0 #111827,
-        0 2px 2px rgba(17, 24, 39, 0.45);
+      background: transparent;
     }
     .piece.black {
-      color: #111827;
-      text-shadow:
-        -1px -1px 0 rgba(255, 255, 255, 0.7),
-        1px -1px 0 rgba(255, 255, 255, 0.7),
-        -1px 1px 0 rgba(255, 255, 255, 0.7),
-        1px 1px 0 rgba(255, 255, 255, 0.7),
-        0 2px 2px rgba(17, 24, 39, 0.25);
+      background: transparent;
     }
     .board-meta {
       margin-top: 0.8rem;
@@ -725,11 +663,7 @@ HTML = r"""
       border-color: var(--accent);
     }
     .position-note {
-      margin-top: 0.8rem;
-      border: 1px solid var(--line);
-      border-radius: 0.22rem;
-      background: var(--surface-strong);
-      padding: 0.8rem;
+      display: none;
     }
     .position-note h3 {
       margin: 0 0 0.25rem;
@@ -825,27 +759,43 @@ HTML = r"""
       pointer-events: none;
       z-index: 4;
     }
-    .move-arrow-layer path {
-      filter: drop-shadow(0 1px 1px rgba(21, 34, 56, 0.22));
+    .move-arrow-layer line {
+      stroke: color-mix(in srgb, var(--accent) 76%, transparent);
+      stroke-width: 2.1;
+      stroke-linecap: round;
+      filter: drop-shadow(0 1px 1px rgba(21, 34, 56, 0.18));
+      stroke-dasharray: 150;
+      stroke-dashoffset: 150;
+      animation: arrowDraw 180ms ease-out forwards;
     }
-    .square-mark {
-      position: absolute;
-      inset: 7%;
-      z-index: 1;
-      border-radius: 0.18rem;
-      background: rgba(220, 38, 38, 0.46);
-      pointer-events: none;
+    .move-arrow-layer polygon {
+      fill: color-mix(in srgb, var(--accent) 76%, transparent);
+      filter: drop-shadow(0 1px 1px rgba(21, 34, 56, 0.18));
+      opacity: 0;
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: arrowHeadIn 130ms ease-out 120ms forwards;
+    }
+    @keyframes arrowDraw {
+      to {
+        stroke-dashoffset: 0;
+      }
+    }
+    @keyframes arrowHeadIn {
+      from {
+        opacity: 0;
+        transform: scale(0.78);
+      }
+      to {
+        opacity: 1;
+        transform: scale(1);
+      }
     }
     .comparison-grid {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 0.75rem;
-      margin-bottom: 0.9rem;
-    }
-    @media (max-width: 1180px) {
-      .comparison-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
+      margin-bottom: 0.75rem;
     }
     @media (max-width: 720px) {
       .comparison-grid {
@@ -855,8 +805,8 @@ HTML = r"""
     .model-card {
       border: 1px solid var(--line);
       border-radius: 0.22rem;
-      padding: 0.9rem;
-      min-height: clamp(11.25rem, 24vh, 15rem);
+      padding: 0.8rem;
+      min-height: 8.25rem;
       background: var(--surface);
     }
     .model-title {
@@ -868,7 +818,7 @@ HTML = r"""
     }
     .model-value {
       margin-top: 0.45rem;
-      font-size: clamp(2.05rem, 4vw, 3rem);
+      font-size: clamp(1.75rem, 3vw, 2.4rem);
       line-height: 1;
       font-weight: 800;
       letter-spacing: 0;
@@ -884,8 +834,8 @@ HTML = r"""
       font-weight: 700;
     }
     .sparkline {
-      margin-top: 0.7rem;
-      height: 56px;
+      margin-top: 0.55rem;
+      height: 36px;
       border-top: 1px solid var(--line);
       padding-top: 0.5rem;
     }
@@ -902,7 +852,7 @@ HTML = r"""
     }
     .master-block {
       display: grid;
-      gap: 0.85rem;
+      gap: 0.65rem;
       align-content: start;
     }
     .master-caption {
@@ -939,22 +889,13 @@ HTML = r"""
       z-index: 1;
     }
     .master-value {
-      font-size: clamp(2rem, 4vw, 2.75rem);
+      font-size: clamp(1.8rem, 3vw, 2.35rem);
       line-height: 1;
       font-weight: 800;
       letter-spacing: 0;
     }
     .adv-ring {
-      min-height: 7.5rem;
-      margin: 0.1rem 0 0;
-      border-radius: 0.22rem;
-      display: grid;
-      place-items: center;
-      border: 1px solid var(--line);
-      background: var(--surface-soft);
-      color: var(--accent-dark);
-      text-align: center;
-      padding: 1rem;
+      display: none;
     }
     .adv-ring span {
       width: 2.8rem;
@@ -977,13 +918,7 @@ HTML = r"""
       background: color-mix(in srgb, var(--accent) 10%, var(--surface));
     }
     .ring-text {
-      text-align: center;
-      margin-top: -0.25rem;
-      font-size: 0.72rem;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--muted);
-      font-weight: 800;
+      display: none;
     }
     .best-move {
       display: grid;
@@ -993,8 +928,8 @@ HTML = r"""
       border: 1px solid var(--line);
       border-radius: 0.22rem;
       background: var(--surface-strong);
-      padding: 0.85rem 0.9rem;
-      min-height: 4.75rem;
+      padding: 0.7rem 0.8rem;
+      min-height: 3.75rem;
     }
     .best-move-label {
       color: var(--muted);
@@ -1076,10 +1011,7 @@ HTML = r"""
       cursor: wait;
     }
     #status {
-      color: var(--muted);
-      font-size: 0.78rem;
-      margin-top: 0.65rem;
-      min-height: 0.95rem;
+      display: none;
     }
     #status.error {
       color: #b42318;
@@ -1091,7 +1023,6 @@ HTML = r"""
     <header class="headline">
       <div class="headline-copy">
         <h1>Chess Evaluation CNN</h1>
-        <p>Compare a static neural network, local baselines, and Stockfish on any FEN.</p>
       </div>
     </header>
 
@@ -1134,12 +1065,6 @@ HTML = r"""
             <div id="cnnSpark" class="sparkline" aria-hidden="true"></div>
           </article>
           <article class="model-card">
-            <div class="model-title">Custom</div>
-            <div id="cxxValue" class="model-value">—</div>
-            <div class="sub-tag">C++ Engine</div>
-            <div id="cxxSpark" class="sparkline" aria-hidden="true"></div>
-          </article>
-          <article class="model-card">
             <div class="model-title">Engine</div>
             <div id="sfValue" class="model-value">—</div>
             <div class="sub-tag">Stockfish</div>
@@ -1152,10 +1077,16 @@ HTML = r"""
             <div id="masterFill" class="master-fill"></div>
           </div>
           <div id="masterValue" class="master-value">—</div>
+          <div class="best-move">
+            <div>
+              <div class="best-move-label">Stockfish best move</div>
+              <div id="bestMoveLine" class="best-move-line">Waiting for engine line</div>
+            </div>
+            <div id="bestMoveValue" class="best-move-value empty">—</div>
+          </div>
           <div id="advRing" class="adv-ring equal"><span></span></div>
           <div id="ringLabel" class="ring-text">Equal</div>
         </div>
-        <div id="statusLine" class="board-meta" style="text-transform:none; letter-spacing:0.02em;">Ready to compare the position.</div>
       </section>
     </section>
 
@@ -1171,13 +1102,13 @@ HTML = r"""
   <script>
     const START_FEN = {{ start_fen|tojson }};
     const EXAMPLES = {{ examples|tojson }};
+    const COMMON_OPENING_LINES = {{ common_opening_lines|tojson }};
     const MAX_SPARK = 8;
     const boardEl = document.getElementById("board");
     const fenInput = document.getElementById("fenInput");
     const turnBadge = document.getElementById("turnBadge");
     const stateBadge = document.getElementById("stateBadge");
     const statusEl = document.getElementById("status");
-    const statusLine = document.getElementById("statusLine");
     const dotRow = document.getElementById("exampleDots");
     const exampleTitle = document.getElementById("exampleTitle");
     const exampleDescription = document.getElementById("exampleDescription");
@@ -1186,23 +1117,25 @@ HTML = r"""
     const demoMoveLabel = document.getElementById("demoMoveLabel");
     const masterFill = document.getElementById("masterFill");
     const masterValueEl = document.getElementById("masterValue");
+    const bestMoveValue = document.getElementById("bestMoveValue");
+    const bestMoveLine = document.getElementById("bestMoveLine");
     const advRing = document.getElementById("advRing");
     const ringLabel = document.getElementById("ringLabel");
     const evalBtn = document.getElementById("evalBtn");
 
-    const pieceGlyphs = {
-      K: "♔",
-      Q: "♕",
-      R: "♖",
-      B: "♗",
-      N: "♘",
-      P: "♙",
-      k: "♚",
-      q: "♛",
-      r: "♜",
-      b: "♝",
-      n: "♞",
-      p: "♟",
+    const pieceImages = {
+      K: "https://images.chesscomfiles.com/chess-themes/pieces/neo/150/wk.png",
+      Q: "https://images.chesscomfiles.com/chess-themes/pieces/neo/150/wq.png",
+      R: "https://images.chesscomfiles.com/chess-themes/pieces/neo/150/wr.png",
+      B: "https://images.chesscomfiles.com/chess-themes/pieces/neo/150/wb.png",
+      N: "https://images.chesscomfiles.com/chess-themes/pieces/neo/150/wn.png",
+      P: "https://images.chesscomfiles.com/chess-themes/pieces/neo/150/wp.png",
+      k: "https://images.chesscomfiles.com/chess-themes/pieces/neo/150/bk.png",
+      q: "https://images.chesscomfiles.com/chess-themes/pieces/neo/150/bq.png",
+      r: "https://images.chesscomfiles.com/chess-themes/pieces/neo/150/br.png",
+      b: "https://images.chesscomfiles.com/chess-themes/pieces/neo/150/bb.png",
+      n: "https://images.chesscomfiles.com/chess-themes/pieces/neo/150/bn.png",
+      p: "https://images.chesscomfiles.com/chess-themes/pieces/neo/150/bp.png",
     };
 
     let requestSeq = 0;
@@ -1212,14 +1145,9 @@ HTML = r"""
     let demoStartFen = START_FEN;
     let demoLine = [];
     let demoIndex = 0;
-    const highlightedSquares = new Set();
-    const drawnArrows = [];
-    let rightDragStart = null;
-    let customRefineTimer = null;
     const histories = {
       mat: [],
       cnn: [],
-      cxx: [],
       sf: [],
     };
 
@@ -1325,18 +1253,10 @@ HTML = r"""
       };
     }
 
-    function arrowPath(move, offset = 0) {
-      if (!move || !move.from || !move.to) return "";
-      const fromBase = squarePoint(move.from);
-      const toBase = squarePoint(move.to);
-      const dxBase = toBase.x - fromBase.x;
-      const dyBase = toBase.y - fromBase.y;
-      const lengthBase = Math.hypot(dxBase, dyBase);
-      if (!lengthBase) return "";
-      const offsetX = (-dyBase / lengthBase) * offset;
-      const offsetY = (dxBase / lengthBase) * offset;
-      const from = { x: fromBase.x + offsetX, y: fromBase.y + offsetY };
-      const to = { x: toBase.x + offsetX, y: toBase.y + offsetY };
+    function moveArrowSvg(move) {
+      if (!move) return "";
+      const from = squarePoint(move.from);
+      const to = squarePoint(move.to);
       const dx = to.x - from.x;
       const dy = to.y - from.y;
       const length = Math.hypot(dx, dy);
@@ -1345,32 +1265,11 @@ HTML = r"""
       const uy = dy / length;
       const px = -uy;
       const py = ux;
-      const shaftHalfWidth = 0.62;
-      const headLength = 4.6;
-      const headHalfWidth = 2.0;
-      const tail = {
-        x: from.x + ux * 2.2,
-        y: from.y + uy * 2.2,
-      };
+      const headLength = 3.4;
+      const headHalfWidth = 1.55;
       const shaftEnd = {
         x: to.x - ux * headLength,
         y: to.y - uy * headLength,
-      };
-      const tailLeft = {
-        x: tail.x + px * shaftHalfWidth,
-        y: tail.y + py * shaftHalfWidth,
-      };
-      const tailRight = {
-        x: tail.x - px * shaftHalfWidth,
-        y: tail.y - py * shaftHalfWidth,
-      };
-      const shaftLeft = {
-        x: shaftEnd.x + px * shaftHalfWidth,
-        y: shaftEnd.y + py * shaftHalfWidth,
-      };
-      const shaftRight = {
-        x: shaftEnd.x - px * shaftHalfWidth,
-        y: shaftEnd.y - py * shaftHalfWidth,
       };
       const left = {
         x: shaftEnd.x + px * headHalfWidth,
@@ -1380,27 +1279,11 @@ HTML = r"""
         x: shaftEnd.x - px * headHalfWidth,
         y: shaftEnd.y - py * headHalfWidth,
       };
-      return [
-        `M ${tailLeft.x.toFixed(2)} ${tailLeft.y.toFixed(2)}`,
-        `L ${shaftLeft.x.toFixed(2)} ${shaftLeft.y.toFixed(2)}`,
-        `L ${left.x.toFixed(2)} ${left.y.toFixed(2)}`,
-        `L ${to.x.toFixed(2)} ${to.y.toFixed(2)}`,
-        `L ${right.x.toFixed(2)} ${right.y.toFixed(2)}`,
-        `L ${shaftRight.x.toFixed(2)} ${shaftRight.y.toFixed(2)}`,
-        `L ${tailRight.x.toFixed(2)} ${tailRight.y.toFixed(2)}`,
-        "Z",
-      ].join(" ");
-    }
-
-    function annotationSvg() {
-      const arrows = [];
-      const preview = previewDemoMove();
-      if (preview) arrows.push({ from: preview.from, to: preview.to, color: "rgba(31,122,140,0.86)" });
-      drawnArrows.forEach((arrow) => arrows.push(arrow));
-      if (!arrows.length) return "";
+      const point = ({ x, y }) => `${x.toFixed(2)},${y.toFixed(2)}`;
       return `
         <svg class="move-arrow-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-          ${arrows.map((arrow) => `<path d="${arrowPath(arrow)}" fill="${arrow.color}" opacity="1" />`).join("")}
+          <line x1="${from.x.toFixed(2)}" y1="${from.y.toFixed(2)}" x2="${shaftEnd.x.toFixed(2)}" y2="${shaftEnd.y.toFixed(2)}" />
+          <polygon points="${point(to)} ${point(left)} ${point(right)}" />
         </svg>
       `;
     }
@@ -1411,6 +1294,33 @@ HTML = r"""
       const replay = new Chess();
       const loaded = replay.load_pgn(`${item.pgn} *`, { sloppy: true });
       return loaded ? replay.fen() : START_FEN;
+    }
+
+    function randomPracticalFen() {
+      if (!window.Chess) return START_FEN;
+      const replay = new Chess();
+      const line = COMMON_OPENING_LINES[Math.floor(Math.random() * COMMON_OPENING_LINES.length)] || [];
+      const prefixLength = Math.max(4, Math.floor(Math.random() * (line.length + 1)));
+      for (const san of line.slice(0, prefixLength)) {
+        if (!replay.move(san, { sloppy: true })) break;
+      }
+      const extraPlies = 6 + Math.floor(Math.random() * 18);
+      for (let i = 0; i < extraPlies && !replay.game_over(); i++) {
+        const moves = replay.moves({ verbose: true });
+        if (!moves.length) break;
+        const checks = moves.filter((move) => move.san.includes("+") || move.san.includes("#"));
+        const captures = moves.filter((move) => move.captured);
+        const quiet = moves.filter((move) => !move.captured && !move.san.includes("+") && !move.san.includes("#"));
+        const pool = checks.length && Math.random() < 0.16
+          ? checks
+          : captures.length && Math.random() < 0.36
+            ? captures
+            : quiet.length
+              ? quiet
+              : moves;
+        replay.move(pool[Math.floor(Math.random() * pool.length)]);
+      }
+      return replay.fen();
     }
 
     function animateValue(element, targetCp) {
@@ -1449,11 +1359,6 @@ HTML = r"""
         const name = squareName(rowIndex, fileIndex);
         square.dataset.square = name;
         square.className = `square ${((rowIndex + fileIndex) % 2 === 0) ? "light-square" : "dark-square"}${selectedSquare === name ? " selected" : ""}${targets.includes(name) ? " target" : ""}`;
-        if (highlightedSquares.has(name)) {
-          const mark = document.createElement("span");
-          mark.className = "square-mark";
-          square.appendChild(mark);
-        }
 
         if (fileIndex === 0) {
           const rank = document.createElement("span");
@@ -1468,11 +1373,15 @@ HTML = r"""
           square.appendChild(fileLabel);
         }
 
-        const glyph = pieceCode ? pieceGlyphs[pieceCode] : null;
-        if (glyph) {
+        const imageSrc = pieceCode ? pieceImages[pieceCode] : null;
+        if (imageSrc) {
           const p = document.createElement("span");
           p.className = `piece ${pieceCode === pieceCode.toUpperCase() ? "white" : "black"}`;
-          p.textContent = glyph;
+          const img = document.createElement("img");
+          img.src = imageSrc;
+          img.alt = "";
+          img.draggable = false;
+          p.appendChild(img);
           square.appendChild(p);
         }
 
@@ -1507,7 +1416,7 @@ HTML = r"""
         grid.appendChild(makeSquare(rowIndex, column));
       }
       boardEl.replaceChildren(grid);
-      boardEl.insertAdjacentHTML("beforeend", annotationSvg());
+      boardEl.insertAdjacentHTML("beforeend", moveArrowSvg(previewDemoMove()));
       updateDemoControls();
     }
 
@@ -1539,7 +1448,7 @@ HTML = r"""
       `;
     }
 
-    function updateMaster(cp) {
+    function updateMaster(cp, displayValue = null) {
       const clamped = clamp(Number.isFinite(cp) ? cp : 0, -1000, 1000);
       const ratio = (clamped + 1000) / 2000;
       const spread = Math.abs(ratio - 0.5) * 2;
@@ -1563,13 +1472,26 @@ HTML = r"""
         masterFill.style.boxShadow = "none";
       }
 
-      masterValueEl.textContent = cpToLabel(clamped);
+      masterValueEl.textContent = displayValue || cpToLabel(clamped);
       animateRing(clamped);
     }
 
     function formatUciSquares(uci) {
       if (!uci || uci.length < 4) return "";
       return `${uci.slice(0, 2)} to ${uci.slice(2, 4)}`;
+    }
+
+    function updateBestMove(stockfish, turn) {
+      const move = stockfish?.best_move_san || stockfish?.best_move_uci;
+      bestMoveValue.textContent = move || "—";
+      bestMoveValue.classList.toggle("empty", !move);
+      const squares = formatUciSquares(stockfish?.best_move_uci);
+      const pv = stockfish?.pv?.length ? `PV: ${stockfish.pv.join(" ")}` : "";
+      bestMoveLine.textContent = move
+        ? `${turn || "Side to move"}${squares ? ` · ${squares}` : ""}${pv ? ` · ${pv}` : ""}`
+        : "Engine move unavailable";
+      bestMoveValue.title = pv || "";
+      bestMoveLine.title = pv || stockfish?.note || "";
     }
 
     function animateRing(cp) {
@@ -1601,13 +1523,13 @@ HTML = r"""
       if (Number.isFinite(cp)) {
         histories[side].push(cp);
         if (histories[side].length > MAX_SPARK) histories[side].shift();
-        if (payload.mate_like) {
-          valueEl.textContent = cp < 0 ? "-M" : "M";
+        if (payload.display_value) {
+          valueEl.textContent = payload.display_value;
           valueEl.dataset.cp = cp;
         } else {
           animateValue(valueEl, cp);
         }
-        const colors = { mat: "#667085", cnn: "#1f7a8c", cxx: "#8a4b12", sf: "#18212f" };
+        const colors = { mat: "#667085", cnn: "#1f7a8c", sf: "#18212f" };
         sparkEl.innerHTML = buildSpark(histories[side], colors[side] || "#1f7a8c");
       }
     }
@@ -1632,6 +1554,22 @@ HTML = r"""
         });
         dotRow.appendChild(btn);
       });
+      const randomBtn = document.createElement("button");
+      randomBtn.type = "button";
+      randomBtn.textContent = String(names.length + 1);
+      randomBtn.title = "Random practical position";
+      randomBtn.addEventListener("click", () => {
+        dotRow.querySelectorAll("button").forEach((el) => el.classList.remove("active"));
+        randomBtn.classList.add("active");
+        exampleTitle.textContent = "Random practical position";
+        exampleDescription.textContent = "";
+        fenInput.value = randomPracticalFen();
+        demoStartFen = fenInput.value;
+        demoLine = [];
+        demoIndex = 0;
+        triggerEvaluate(false);
+      });
+      dotRow.appendChild(randomBtn);
     }
 
     function markTurn(turn, isCheck, isOver) {
@@ -1646,45 +1584,8 @@ HTML = r"""
       evalBtn.disabled = loading;
     }
 
-    function cancelCustomRefinement() {
-      if (customRefineTimer) {
-        clearTimeout(customRefineTimer);
-        customRefineTimer = null;
-      }
-    }
-
-    function scheduleCustomRefinement(fen, id, step = 0) {
-      const passes = [
-        { delay: 650, time: 0.75, depth: 12 },
-        { delay: 1100, time: 1.75, depth: 15 },
-        { delay: 1600, time: 3.5, depth: 18 },
-      ];
-      if (step >= passes.length) return;
-      const pass = passes[step];
-      cancelCustomRefinement();
-      customRefineTimer = setTimeout(async () => {
-        if (id !== requestSeq || fen !== currentFen) return;
-        try {
-          statusLine.textContent = `C++ engine deepening… ${pass.time}s`;
-          const response = await fetch("/api/custom-engine", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ fen, depth: pass.depth, time: pass.time }),
-          });
-          const payload = await response.json();
-          if (id !== requestSeq || fen !== currentFen || !response.ok) return;
-          updateModel("cxx", payload);
-          statusLine.textContent = `C++ refined: ${payload.label || "Unavailable"} at ${pass.time}s`;
-          scheduleCustomRefinement(fen, id, step + 1);
-        } catch {
-          if (id === requestSeq) statusLine.textContent = "C++ refinement unavailable";
-        }
-      }, pass.delay);
-    }
-
     async function evaluateCurrent() {
       const id = ++requestSeq;
-      cancelCustomRefinement();
       setLoading(true);
       setStatus("Evaluating...");
       try {
@@ -1708,26 +1609,18 @@ HTML = r"""
 
         const material = results.Material || null;
         const cnn = results.CNN || null;
-        const customEngine = results["Custom Engine"] || null;
         const stockfish = results.Stockfish || null;
-        boardFromFen(payload.fen || currentFen);
         updateModel("mat", material);
         updateModel("cnn", cnn);
-        updateModel("cxx", customEngine);
         updateModel("sf", stockfish);
 
-        const anchorSource = Number.isFinite(stockfish?.cp) ? stockfish : Number.isFinite(customEngine?.cp) ? customEngine : Number.isFinite(cnn?.cp) ? cnn : null;
-        const anchor = Number.isFinite(anchorSource?.cp) ? anchorSource.cp : 0;
-        updateMaster(anchor);
-        if (anchorSource?.mate_like) {
-          masterValueEl.textContent = anchor < 0 ? "-M" : "M";
-        }
+        const anchor = Number.isFinite(stockfish?.cp) ? stockfish.cp : Number.isFinite(cnn?.cp) ? cnn.cp : 0;
+        updateMaster(anchor, stockfish?.display_value || null);
+        updateBestMove(stockfish, payload.turn);
 
         fenInput.value = currentFen;
         setStatus("Updated");
         setTimeout(() => setStatus("Type or pick a position below"), 1200);
-        statusLine.textContent = `Material: ${material?.label || "Unavailable"}  ·  CNN: ${cnn?.label || "Unavailable"}  ·  C++: ${customEngine?.label || "Unavailable"}  ·  Stockfish: ${stockfish?.label || "Unavailable"}`;
-        scheduleCustomRefinement(currentFen, id);
       } finally {
         if (id === requestSeq) {
           setLoading(false);
@@ -1770,58 +1663,6 @@ HTML = r"""
 
     function pieceAt(square) {
       return game && square ? game.get(square) : null;
-    }
-
-    function squareFromEvent(event) {
-      const squareEl = event.target.closest(".square");
-      return squareEl ? squareEl.dataset.square : null;
-    }
-
-    function toggleHighlight(square) {
-      if (!square) return;
-      if (highlightedSquares.has(square)) {
-        highlightedSquares.delete(square);
-      } else {
-        highlightedSquares.add(square);
-      }
-      boardFromFen(currentFen);
-    }
-
-    function addOrRemoveArrow(from, to) {
-      if (!from || !to || from === to) return;
-      const existing = drawnArrows.findIndex((arrow) => arrow.from === from && arrow.to === to);
-      if (existing >= 0) {
-        drawnArrows.splice(existing, 1);
-      } else {
-        drawnArrows.push({ from, to, color: "rgba(220,38,38,0.86)" });
-      }
-      boardFromFen(currentFen);
-    }
-
-    function handleBoardContextMenu(event) {
-      event.preventDefault();
-    }
-
-    function handleBoardMouseDown(event) {
-      if (event.button !== 2) return;
-      event.preventDefault();
-      rightDragStart = squareFromEvent(event);
-    }
-
-    function handleBoardMouseUp(event) {
-      if (event.button !== 2) return;
-      event.preventDefault();
-      const target = squareFromEvent(event);
-      if (!rightDragStart || !target) {
-        rightDragStart = null;
-        return;
-      }
-      if (rightDragStart === target) {
-        toggleHighlight(target);
-      } else {
-        addOrRemoveArrow(rightDragStart, target);
-      }
-      rightDragStart = null;
     }
 
     function handleBoardClick(event) {
@@ -1882,9 +1723,6 @@ HTML = r"""
         }
       });
       boardEl.addEventListener("click", handleBoardClick);
-      boardEl.addEventListener("contextmenu", handleBoardContextMenu);
-      boardEl.addEventListener("mousedown", handleBoardMouseDown);
-      boardEl.addEventListener("mouseup", handleBoardMouseUp);
     });
   </script>
 </body>
@@ -1897,7 +1735,12 @@ def create_app() -> Flask:
 
     @app.get("/")
     def index():
-        return render_template_string(HTML, start_fen=START_FEN, examples=EXAMPLE_FENS)
+        return render_template_string(
+            HTML,
+            start_fen=START_FEN,
+            examples=EXAMPLE_FENS,
+            common_opening_lines=COMMON_OPENING_LINES,
+        )
 
     @app.post("/api/evaluate")
     def api_evaluate():
@@ -1912,28 +1755,12 @@ def create_app() -> Flask:
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
 
-    @app.post("/api/custom-engine")
-    def api_custom_engine():
-        data = request.get_json(silent=True) or {}
-        fen = str(data.get("fen", "")).strip()
-        try:
-            depth = int(data.get("depth", 12))
-            depth = max(1, min(24, depth))
-            time_limit = float(data.get("time", 1.0))
-            time_limit = max(0.05, min(8.0, time_limit))
-            if not validate_fen(fen):
-                raise ValueError("Invalid FEN.")
-            return jsonify(custom_engine_result(chess.Board(fen).fen(), depth, time_limit))
-        except ValueError as exc:
-            return jsonify({"error": str(exc)}), 400
-
     @app.get("/api/health")
     def api_health():
         return jsonify(
             {
                 "ok": True,
                 "model_exists": MODEL_PATH.exists(),
-                "custom_engine": find_custom_engine(),
                 "stockfish": find_stockfish(),
                 "stockfish_nets": find_stockfish_nets(),
                 "stockfish_engine_options": stockfish_engine_options(),
