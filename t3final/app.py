@@ -32,6 +32,10 @@ STOCKFISH_CANDIDATES = [
     "/usr/local/bin/stockfish",
     "/usr/bin/stockfish",
 ]
+CUSTOM_ENGINE_CANDIDATES = [
+    os.environ.get("CUSTOM_CHESS_ENGINE_BINARY", ""),
+    "~/Documents/coding/apps/chess/cpp/chess_engine_fast",
+]
 STOCKFISH_NET_NAMES = ("nn-7bf13f9655c8.nnue", "nn-47fc8b7fff06.nnue")
 CUSTOM_STOCKFISH_EVALFILE_CANDIDATES = (
     "models/stockfish/*.nnue",
@@ -115,6 +119,16 @@ def find_stockfish() -> str | None:
     found = shutil.which("stockfish")
     if found:
         return found
+    return None
+
+
+def find_custom_engine() -> str | None:
+    for path in CUSTOM_ENGINE_CANDIDATES:
+        if not path:
+            continue
+        candidate = Path(path).expanduser()
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return str(candidate.resolve())
     return None
 
 
@@ -339,6 +353,70 @@ def stockfish_result(fen: str, depth: int = 14, time_limit: float = 0.25) -> dic
         return result_payload("Stockfish", None, "Unavailable", f"Stockfish failed: {exc}")
 
 
+def normalize_custom_engine_cp(cp: int) -> tuple[float, bool]:
+    if abs(cp) >= 20000:
+        return (10000.0 if cp > 0 else -10000.0), True
+    return float(cp), False
+
+
+def custom_engine_result(fen: str, depth: int = 10, time_limit: float = 0.25) -> dict[str, Any]:
+    engine_path = find_custom_engine()
+    if not engine_path:
+        return result_payload(
+            "Custom Engine",
+            None,
+            "Unavailable",
+            "Custom C++ engine was not found at ~/Documents/coding/apps/chess/cpp/chess_engine_fast.",
+        )
+
+    board = chess.Board(fen)
+    try:
+        with chess.engine.SimpleEngine.popen_uci(engine_path) as engine:
+            info = engine.analyse(board, chess.engine.Limit(depth=depth, time=time_limit), multipv=1)
+            if isinstance(info, list):
+                info = info[0]
+
+        score = info["score"].white()
+        cp = score.score(mate_score=10000)
+        mate = score.mate()
+        if cp is None:
+            return result_payload("Custom Engine", None, "Unavailable", "Custom engine did not return a centipawn score.")
+        display_cp, mate_like = normalize_custom_engine_cp(int(cp))
+
+        nodes = int(info.get("nodes", 0) or 0)
+        reached_depth = int(info.get("depth", 0) or 0)
+        pv_board = board.copy(stack=False)
+        pv_moves = []
+        best_move = None
+        for move in info.get("pv", [])[:5]:
+            san = pv_board.san(move)
+            if best_move is None:
+                best_move = {"san": san, "uci": move.uci()}
+            pv_moves.append(san)
+            pv_board.push(move)
+
+        note = f"Custom C++ engine depth {reached_depth}, nodes {nodes:,}"
+        if mate_like:
+            note += f"; raw mate-like score {cp} normalized for display"
+        if pv_moves:
+            note += f"; PV: {' '.join(pv_moves)}"
+        return result_payload(
+            "Custom Engine",
+            display_cp,
+            pretty_label_from_eval(display_cp),
+            note,
+            raw_cp=float(cp),
+            mate_like=mate_like or mate is not None,
+            mate_in=None if mate is None else abs(int(mate)),
+            display_value=mate_display(mate),
+            best_move_san=best_move["san"] if best_move else None,
+            best_move_uci=best_move["uci"] if best_move else None,
+            pv=pv_moves,
+        )
+    except Exception as exc:
+        return result_payload("Custom Engine", None, "Unavailable", f"Custom engine failed: {exc}")
+
+
 def evaluate_position(fen: str, stockfish_depth: int = 14, stockfish_time: float = 0.25) -> dict[str, Any]:
     fen = fen.strip()
     if not validate_fen(fen):
@@ -354,6 +432,7 @@ def evaluate_position(fen: str, stockfish_depth: int = 14, stockfish_time: float
         "evaluations": [
             material_result(board),
             cnn_result(board.fen()),
+            custom_engine_result(board.fen(), min(stockfish_depth, 12), stockfish_time),
             stockfish_result(board.fen(), stockfish_depth, stockfish_time),
         ],
     }
@@ -793,7 +872,7 @@ HTML = r"""
     }
     .comparison-grid {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 0.75rem;
       margin-bottom: 0.75rem;
     }
@@ -1065,6 +1144,12 @@ HTML = r"""
             <div id="cnnSpark" class="sparkline" aria-hidden="true"></div>
           </article>
           <article class="model-card">
+            <div class="model-title">Custom</div>
+            <div id="customValue" class="model-value">—</div>
+            <div class="sub-tag">C++ Engine</div>
+            <div id="customSpark" class="sparkline" aria-hidden="true"></div>
+          </article>
+          <article class="model-card">
             <div class="model-title">Engine</div>
             <div id="sfValue" class="model-value">—</div>
             <div class="sub-tag">Stockfish</div>
@@ -1148,6 +1233,7 @@ HTML = r"""
     const histories = {
       mat: [],
       cnn: [],
+      custom: [],
       sf: [],
     };
 
@@ -1529,7 +1615,7 @@ HTML = r"""
         } else {
           animateValue(valueEl, cp);
         }
-        const colors = { mat: "#667085", cnn: "#1f7a8c", sf: "#18212f" };
+        const colors = { mat: "#667085", cnn: "#1f7a8c", custom: "#a35f1f", sf: "#18212f" };
         sparkEl.innerHTML = buildSpark(histories[side], colors[side] || "#1f7a8c");
       }
     }
@@ -1609,9 +1695,11 @@ HTML = r"""
 
         const material = results.Material || null;
         const cnn = results.CNN || null;
+        const custom = results["Custom Engine"] || null;
         const stockfish = results.Stockfish || null;
         updateModel("mat", material);
         updateModel("cnn", cnn);
+        updateModel("custom", custom);
         updateModel("sf", stockfish);
 
         const anchor = Number.isFinite(stockfish?.cp) ? stockfish.cp : Number.isFinite(cnn?.cp) ? cnn.cp : 0;
@@ -1761,6 +1849,7 @@ def create_app() -> Flask:
             {
                 "ok": True,
                 "model_exists": MODEL_PATH.exists(),
+                "custom_engine": find_custom_engine(),
                 "stockfish": find_stockfish(),
                 "stockfish_nets": find_stockfish_nets(),
                 "stockfish_engine_options": stockfish_engine_options(),
